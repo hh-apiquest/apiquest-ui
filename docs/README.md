@@ -1,7 +1,3 @@
----
-sidebar_position: 1
----
-
 # ApiQuest UI Docs
 
 ApiQuest UI is a local desktop client focused on fast editing, rich execution feedback,
