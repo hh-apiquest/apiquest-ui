@@ -1,0 +1,112 @@
+appId: com.apiquest.desktop
+productName: ApiQuest
+copyright: Copyright © 2026 ApiQuest
+electronVersion: "40.1.0"
+
+# Directories
+directories:
+  output: dist-installer
+  buildResources: build
+
+# Files to include
+files:
+  - out/**/*
+  - package.json
+
+# Assets to exclude
+asarUnpack:
+  - "**/*.node"
+
+# Windows configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: ApiQuest
+
+# macOS configuration
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+dmg:
+  sign: false
+  contents:
+    - x: 410
+      y: 150
+      type: link
+      path: /Applications
+    - x: 130
+      y: 150
+      type: file
+
+# Linux configuration
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+  category: Development
+  icon: build/icons
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  synopsis: API Testing and Development Tool
+  description: A powerful API testing tool for developers
+
+appImage:
+  license: LICENSE
+
+deb:
+  depends:
+    - gconf2
+    - gconf-service
+    - libnotify4
+    - libappindicator1
+    - libxtst6
+    - libnss3
+
+# Publishing (optional - configure when ready)
+publish: null
+
+# Compression
+compression: normal
+
+# Enable auto-update (configure when ready)
+# afterSign: build/notarize.js  # For macOS notarization

@@ -1,0 +1,50 @@
+{
+  "name": "@apiquest/desktop",
+  "version": "1.0.0",
+  "description": "Quest Desktop - API Testing Tool",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "start": "electron dist/main/index.js",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:all": "npm run build && electron-builder -mwl"
+  },
+  "dependencies": {
+    "@apiquest/fracture": "^1.0.7",
+    "@apiquest/plugin-ui-types": "workspace:*",
+    "@apiquest/types": "^1.0.7",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@heroicons/react": "^2.2.0",
+    "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/colors": "^3.0.0",
+    "@radix-ui/themes": "^3.3.0",
+    "eventemitter3": "^5.0.4",
+    "monaco-editor": "^0.55.1",
+    "monaco-themes": "^0.4.8",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^5.1.2",
+    "electron": "^40.1.0",
+    "electron-builder": "^26.7.0",
+    "electron-devtools-installer": "^4.0.0",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "vite-plugin-checker": "^0.12.0"
+  }
+}

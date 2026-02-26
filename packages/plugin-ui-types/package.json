@@ -1,0 +1,29 @@
+{
+  "name": "@apiquest/plugin-ui-types",
+  "version": "1.0.0",
+  "description": "TypeScript types for ApiQuest plugin UI interfaces",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "apiquest",
+    "plugin",
+    "types",
+    "ui"
+  ],
+  "author": "ApiQuest Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@apiquest/types": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@apiquest/types": "*",
+    "react": "^18.0.0"
+  }
+}

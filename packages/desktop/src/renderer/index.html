@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quest Desktop</title>
+  <!--
+    Import map for shared dependencies - MUST be before any module scripts.
+    Maps bare specifiers to vendor files served by Vite (dev) or vendor:// protocol (prod).
+    Only React and Radix UI are shared; other deps are bundled by each plugin.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "./vendor/react.ts",
+      "react-dom": "./vendor/react-dom.ts",
+      "react/jsx-runtime": "./vendor/react-jsx-runtime.ts",
+      "react/jsx-dev-runtime": "./vendor/react-jsx-dev-runtime.ts",
+      "@radix-ui/themes": "./vendor/radix-ui-themes.ts"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="./main.tsx"></script>
+</body>
+</html>
