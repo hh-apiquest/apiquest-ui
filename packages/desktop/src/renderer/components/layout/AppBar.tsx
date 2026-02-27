@@ -93,10 +93,9 @@ export function AppBar() {
           src={appLogo}
           alt="ApiQuest"
           style={{
-            width: '18px',
-            height: '18px',
-            marginRight: '4px',
-            filter: 'invert(71%) sepia(71%) saturate(464%) hue-rotate(128deg) brightness(93%) contrast(92%)'
+            width: '24px',
+            height: '24px',
+            marginRight: '4px'
           }}
           draggable={false}
         />

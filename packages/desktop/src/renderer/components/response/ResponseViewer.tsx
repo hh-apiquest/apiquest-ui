@@ -144,6 +144,9 @@ export function ResponseViewer({ request, response, events, error, pluginUI, uiC
         </div>
 
         <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--gray-9)' }}>
+          {metadata?.duration !== undefined && metadata.duration > 0 && (
+            <span>{metadata.duration}ms</span>
+          )}
           <span>Size: {formatBytes(metadata?.size || 0)}</span>
         </div>
       </div>
