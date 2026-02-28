@@ -75,7 +75,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
         const baseFolder = findFolder(loadedCollection.items);
         if (!baseFolder) throw new Error('Folder not found');
         
-        const sessionState = await getResourceState(workspace.id, tab.resourceId);
+        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
         
         const finalFolder = {
           ...baseFolder,
@@ -112,7 +112,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
       setDirty(tab.id, false);
       clearCollectionCache(tab.collectionId);
       await refreshWorkspace();
-      await clearResourceState(workspace.id, tab.resourceId);
+      await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
@@ -123,7 +123,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
     if (!workspace || !folder) return;
     
     try {
-      await saveResourceState(workspace.id, tab.resourceId, {
+      await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
         name: folder.name,
         // Normalize "inherit" to undefined - inherit is default behavior and shouldn't create session state
         auth: folder.auth?.type === 'inherit' ? undefined : folder.auth,

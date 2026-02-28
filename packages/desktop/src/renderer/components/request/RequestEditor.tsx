@@ -166,7 +166,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         const baseRequest = findRequest(loadedCollection.items);
         if (!baseRequest) throw new Error('Request not found');
         
-        const sessionState = await getResourceState(workspace.id, tab.resourceId);
+        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
         
         const finalRequest: Request = {
           type: 'request',
@@ -212,7 +212,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       if (!request) return;
       await updateRequest(tab.collectionId, tab.resourceId, request);
       setDirty(tab.id, false);
-      await clearResourceState(workspace.id, tab.resourceId);
+      await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
@@ -222,7 +222,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     if (!workspace || !request) return;
     
     try {
-      await saveResourceState(workspace.id, tab.resourceId, {
+      await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
         name: request.name,
         description: request.description,
         data: request.data,

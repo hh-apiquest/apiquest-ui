@@ -93,6 +93,20 @@ ipcMain.handle('workspace:renameCollection', async (_event, workspaceId: string,
     const newCollectionId = crypto.randomUUID();
     collection.info.name = newName.trim();
     collection.info.id = newCollectionId;
+
+    // Regenerate all item IDs (requests and folders) to prevent cross-collection ID collisions
+    const regenerateItemIds = (items: any[]): void => {
+      for (const item of items) {
+        item.id = crypto.randomUUID();
+        if (item.items && Array.isArray(item.items)) {
+          regenerateItemIds(item.items);
+        }
+      }
+    };
+
+    if (collection.items && Array.isArray(collection.items)) {
+      regenerateItemIds(collection.items);
+    }
     
     const sanitizedName = newName.trim().replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
     const newFileName = `${sanitizedName}.apiquest.json`;

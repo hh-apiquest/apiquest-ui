@@ -151,7 +151,7 @@ export function TabBar() {
             }}
             onDiscard={async () => {
               if (workspace) {
-                await clearResourceState(workspace.id, tab.resourceId);
+                await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
               }
               closeTab(tab.id);
             }}

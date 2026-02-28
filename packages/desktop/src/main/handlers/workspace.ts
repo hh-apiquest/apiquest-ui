@@ -42,6 +42,8 @@ export function registerWorkspaceHandlers() {
     
     // Scan for .apiquest.json files
     const files = await walkDirectory(folderPath, '.apiquest.json');
+    // Track seen collection IDs to detect duplicates from copied files
+    const seenCollectionIds = new Set<string>();
     for (const filePath of files) {
       try {
         const stat = await fs.stat(filePath);
@@ -52,17 +54,38 @@ export function registerWorkspaceHandlers() {
         let collectionName = fileName.replace('.apiquest.json', '');
         let collectionVersion = '1.0.0';
         let collectionDescription = '';
+        let collectionData: any = null;
         try {
           const content = await fs.readFile(filePath, 'utf-8');
-          const collection = JSON.parse(content);
-          if (collection.info) {
-            collectionId = collection.info.id || '';
-            collectionName = collection.info.name || collectionName;
-            collectionVersion = collection.info.version || '';
-            collectionDescription = collection.info.description || '';
+          collectionData = JSON.parse(content);
+          if (collectionData.info) {
+            collectionId = collectionData.info.id || '';
+            collectionName = collectionData.info.name || collectionName;
+            collectionVersion = collectionData.info.version || '';
+            collectionDescription = collectionData.info.description || '';
           }
         } catch (readErr) {
           console.error(`Failed to read collection ${fileName}:`, readErr);
+        }
+
+        // Detect and fix duplicate collection IDs: a copied file will have the same ID as the original.
+        // Assign a new UUID to the duplicate and persist it so the file is self-consistent.
+        if (collectionId && seenCollectionIds.has(collectionId)) {
+          const newId = crypto.randomUUID();
+          console.warn(`Duplicate collection ID detected in ${fileName} (id: ${collectionId}). Assigning new ID: ${newId}`);
+          collectionId = newId;
+          if (collectionData && collectionData.info) {
+            collectionData.info.id = newId;
+            try {
+              await fs.writeFile(filePath, JSON.stringify(collectionData, null, 2), 'utf-8');
+            } catch (writeErr) {
+              console.error(`Failed to persist new collection ID for ${fileName}:`, writeErr);
+            }
+          }
+        }
+
+        if (collectionId) {
+          seenCollectionIds.add(collectionId);
         }
         
         // Register collection in runtime registry

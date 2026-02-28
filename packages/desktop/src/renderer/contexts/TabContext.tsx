@@ -160,7 +160,9 @@ export function TabProvider({ children }: TabProviderProps) {
     });
   }, [tabsData]);
 
-  // Resource state management (for unsaved changes) - defined early so it can be used in openRequest
+  // Resource state management (for unsaved changes) - defined early so it can be used in openRequest.
+  // resourceId must be a composite key of the form collectionId::itemId so that two different collections
+  // that share the same item ID (e.g. after a file-level copy of a collection) never share the same entry.
   const clearResourceState = useCallback(async (workspaceId: string, resourceId: string) => {
     try {
       const session = await window.quest.session.get(workspaceId);
@@ -178,8 +180,9 @@ export function TabProvider({ children }: TabProviderProps) {
 
   const openRequest = useCallback(async (collectionId: string, protocol: string, requestId: string, name: string, metadata?: RequestMetadata, isTemporary: boolean = false, initialSubTab?: string, clearSessionOnOpen: boolean = true) => {
     // Clear session state when opening from sidebar (default), but preserve when restoring tabs on app start
+    // Use a composite key so that requests with the same ID in different collections are stored separately.
     if (clearSessionOnOpen && currentWorkspaceId) {
-      clearResourceState(currentWorkspaceId, requestId);
+      clearResourceState(currentWorkspaceId, `${collectionId}::${requestId}`);
     }
 
     setTabsData(prev => {
@@ -234,7 +237,7 @@ export function TabProvider({ children }: TabProviderProps) {
 
       // Always clear session for new tabs (there shouldn't be any, but ensures clean state)
       if (currentWorkspaceId) {
-        clearResourceState(currentWorkspaceId, requestId);
+        clearResourceState(currentWorkspaceId, `${collectionId}::${requestId}`);
       }
 
       const newTab: Tab = {
@@ -270,8 +273,9 @@ export function TabProvider({ children }: TabProviderProps) {
 
   const openCollection = useCallback((collectionId: string, protocol: string, name: string, isTemporary: boolean = false, initialSubTab?: string, clearSessionOnOpen: boolean = true) => {
     // Clear session state when opening from sidebar (default), but preserve when restoring tabs on app start
+    // For collections the resourceId IS the collectionId - composite key is collectionId::collectionId.
     if (clearSessionOnOpen && currentWorkspaceId) {
-      clearResourceState(currentWorkspaceId, collectionId);
+      clearResourceState(currentWorkspaceId, `${collectionId}::${collectionId}`);
     }
 
     setTabsData(prev => {
@@ -324,7 +328,7 @@ export function TabProvider({ children }: TabProviderProps) {
 
       // Always clear session for new tabs (there shouldn't be any, but ensures clean state)
       if (currentWorkspaceId) {
-        clearResourceState(currentWorkspaceId, collectionId);
+        clearResourceState(currentWorkspaceId, `${collectionId}::${collectionId}`);
       }
 
       const newTab: Tab = {
@@ -359,7 +363,7 @@ export function TabProvider({ children }: TabProviderProps) {
   const openFolder = useCallback((collectionId: string, protocol: string, folderId: string, name: string, isTemporary: boolean = false, initialSubTab?: string, clearSessionOnOpen: boolean = true) => {
     // Clear session state when opening from sidebar (default), but preserve when restoring tabs on app start
     if (clearSessionOnOpen && currentWorkspaceId) {
-      clearResourceState(currentWorkspaceId, folderId);
+      clearResourceState(currentWorkspaceId, `${collectionId}::${folderId}`);
     }
 
     setTabsData(prev => {
@@ -412,7 +416,7 @@ export function TabProvider({ children }: TabProviderProps) {
 
       // Always clear session for new tabs (there shouldn't be any, but ensures clean state)
       if (currentWorkspaceId) {
-        clearResourceState(currentWorkspaceId, folderId);
+        clearResourceState(currentWorkspaceId, `${collectionId}::${folderId}`);
       }
 
       const newTab: Tab = {
@@ -588,7 +592,9 @@ export function TabProvider({ children }: TabProviderProps) {
       const restoredTabs: Tab[] = session.tabs.openTabs
         .filter(tabInfo => tabInfo.type !== 'runner')
         .map(tabInfo => {
-          const hasUnsavedData = session.resources[tabInfo.resourceId];
+          // Resource state is keyed as collectionId::resourceId to prevent cross-collection ID collisions.
+          const stateKey = `${tabInfo.collectionId}::${tabInfo.resourceId}`;
+          const hasUnsavedData = session.resources[stateKey];
           return {
             id: tabInfo.id,
             type: tabInfo.type,
@@ -615,7 +621,8 @@ export function TabProvider({ children }: TabProviderProps) {
         const nextBadges: Record<string, RequestBadge | undefined> = { ...prev.badgeByTabId };
 
         restoredTabs.forEach(t => {
-          const resourceState = session.resources[t.resourceId];
+          const stateKey = `${t.collectionId}::${t.resourceId}`;
+          const resourceState = session.resources[stateKey];
           nextDirty[t.id] = !!resourceState;
           nextNames[t.id] = resourceState?.name || t.name;
           nextBadges[t.id] = (t.metadata as RequestMetadata)?.badge;
@@ -672,7 +679,9 @@ export function TabProvider({ children }: TabProviderProps) {
     }
   };
 
-  // Resource state management (for unsaved changes) - saveResourceState and getResourceState
+  // Resource state management (for unsaved changes) - saveResourceState and getResourceState.
+  // resourceId must be a composite key of the form collectionId::itemId (constructed by the caller)
+  // so that items with the same ID across different collections are stored separately.
   const saveResourceState = async (workspaceId: string, resourceId: string, state: ResourceSessionState) => {
     try {
       const session = await window.quest.session.get(workspaceId);

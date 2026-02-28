@@ -48,7 +48,8 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
         setIsLoading(true);
         const baseCollection = await window.quest.workspace.loadCollection(workspace.id, tab.resourceId);
         
-        const sessionState = await getResourceState(workspace.id, tab.resourceId);
+        // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
+        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
         
         const finalCollection = {
           ...baseCollection,
@@ -85,7 +86,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
       // refresh cache so editors reload the latest if reopened
       clearCollectionCache(tab.collectionId);
       await refreshWorkspace();
-      await clearResourceState(workspace.id, tab.resourceId);
+      await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
@@ -96,7 +97,8 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     if (!workspace || !collection) return;
     
     try {
-      await saveResourceState(workspace.id, tab.resourceId, {
+      // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
+      await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
         auth: collection.auth,
         collectionPreScript: collection.collectionPreScript,
         collectionPostScript: collection.collectionPostScript,
