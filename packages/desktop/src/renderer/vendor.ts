@@ -22,10 +22,5 @@ export * as jsxDevRuntime from 'react/jsx-dev-runtime';
 export * as RadixThemes from '@radix-ui/themes';
 export * as RadixColors from '@radix-ui/colors';
 
-// Export Heroicons
-export * as HeroiconsOutline from '@heroicons/react/24/outline';
-export * as HeroiconsSolid from '@heroicons/react/24/solid';
-export * as Heroicons20Solid from '@heroicons/react/20/solid';
-
 // Export plugin types
 export * as PluginUITypes from '@apiquest/plugin-ui-types';

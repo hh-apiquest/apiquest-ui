@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-auth-ui",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "Auth UI Plugin for ApiQuest Desktop",
   "type": "module",
   "main": "dist/index.js",

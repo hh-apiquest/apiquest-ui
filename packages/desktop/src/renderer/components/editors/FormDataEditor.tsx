@@ -1,9 +1,11 @@
-// FormDataEditor - Multipart form data editor
-// For file uploads and form submissions
+// FormDataEditor - Multipart form-data body editor
+// Same visual style as HeadersEditor, ParamsEditor, UrlEncodedEditor.
+// Adds a Type column (text / file) for each row.
 
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import * as Checkbox from '@radix-ui/react-checkbox';
 import { TextField } from '@radix-ui/themes';
-import { XMarkIcon } from '@heroicons/react/24/outline';
+import { TrashIcon } from '@heroicons/react/24/outline';
 
 export interface FormDataEditorProps {
   formData: Array<{
@@ -22,149 +24,239 @@ export interface FormDataEditorProps {
   }>) => void;
 }
 
-export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
-  // Always have one empty row at the end
-  const rows = [...formData, { key: '', value: '', type: 'text' as const, disabled: false }];
+type FormDataRow = {
+  key: string;
+  value: string;
+  type: 'text' | 'binary';
+  disabled?: boolean;
+  description?: string;
+};
 
-  const handleChange = (
-    index: number,
-    field: 'key' | 'value' | 'type' | 'disabled',
-    newValue: string | boolean
-  ) => {
-    const newData = [...formData];
-    
-    if (index === formData.length) {
-      // Adding new row
-      if (field === 'key' || field === 'value') {
-        newData.push({ key: '', value: '', type: 'text', disabled: false, [field]: newValue });
+export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
+  const [focusedRow, setFocusedRow] = useState<number | null>(null);
+  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
+
+  useEffect(() => {
+    if (pendingFocus.current) {
+      const { index, field } = pendingFocus.current;
+      const el = inputRefs.current.get(`${index}-${field}`);
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
       }
-    } else {
-      // Updating existing row
-      newData[index] = { ...newData[index], [field]: newValue };
-      
-      // Remove row if both key and value are empty
-      if (newData[index].key === '' && newData[index].value === '') {
-        newData.splice(index, 1);
-      }
+      pendingFocus.current = null;
     }
-    
-    onChange(newData);
+  }, [formData.length]);
+
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
+    if (el) inputRefs.current.set(`${index}-${field}`, el);
+    else inputRefs.current.delete(`${index}-${field}`);
+  };
+
+  const handleChange = (index: number, field: 'key' | 'value' | 'description' | 'type', value: string) => {
+    const next = [...formData];
+    if (index >= next.length) {
+      next.push({
+        key: field === 'key' ? value : '',
+        value: field === 'value' ? value : '',
+        description: field === 'description' ? value : '',
+        type: 'text',
+        disabled: false,
+      });
+      pendingFocus.current = {
+        index: next.length - 1,
+        field: field === 'description' || field === 'type' ? 'key' : field as 'key' | 'value',
+      };
+    } else {
+      next[index] = { ...next[index], [field]: value } as FormDataRow;
+    }
+    onChange(next);
+  };
+
+  const handleToggle = (index: number) => {
+    const next = [...formData];
+    next[index] = { ...next[index], disabled: !next[index].disabled };
+    onChange(next);
   };
 
   const handleDelete = (index: number) => {
-    const newData = formData.filter((_, i) => i !== index);
-    onChange(newData);
+    onChange(formData.filter((_, i) => i !== index));
   };
 
+  // Add placeholder empty row at the end for new-entry UX
+  const displayRows: FormDataRow[] = [...formData, { key: '', value: '', type: 'text', disabled: false, description: '' }];
+
   return (
-    <div className="form-data-editor">
+    <div className="fd-editor" style={{ fontFamily: 'inherit' }}>
       <style>{`
-        .form-data-row {
-          border-bottom: 1px solid var(--gray-6);
-        }
-        .form-data-row-disabled {
-          opacity: 0.5;
-        }
-        .form-data-input {
-          border: 1px solid var(--gray-6);
-          color: var(--gray-12);
-          background: transparent;
-        }
-        .form-data-input:focus {
-          outline: 2px solid var(--accent-8);
-          outline-offset: 1px;
-        }
-        .form-data-select {
-          border: 1px solid var(--gray-6);
-          color: var(--gray-12);
-          background: var(--color-background);
-        }
-        .form-data-select:focus {
-          outline: 2px solid var(--accent-8);
-          outline-offset: 1px;
-        }
-        .form-data-checkbox {
-          border: 1px solid var(--gray-6);
-        }
-        .form-data-delete {
+        .fd-editor table { width: 100%; border-collapse: collapse; }
+
+        .fd-editor thead tr th {
+          text-align: left;
+          font-size: 11px;
+          font-weight: 500;
           color: var(--gray-9);
+          padding: 4px 6px;
+          border-bottom: 1px solid var(--gray-6);
+          white-space: nowrap;
         }
-        .form-data-delete:hover {
-          color: var(--red-9);
+
+        .fd-editor tbody tr.fd-row { border-bottom: 1px solid var(--gray-5); }
+        .fd-editor tbody tr td { padding: 2px 6px; }
+
+        .fd-editor .fd-row { transition: opacity 130ms ease; }
+        .fd-editor .fd-row-empty { opacity: 0.38; }
+        .fd-editor .fd-row-empty:hover { opacity: 0.6; }
+        .fd-editor .fd-row-disabled { opacity: 0.4; }
+
+        .fd-editor .fd-cb {
+          width: 14px; height: 14px; border-radius: 3px;
+          border: 1px solid var(--gray-7);
+          background: transparent; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
         }
+        .fd-editor .fd-cb[data-state="checked"] {
+          background: var(--accent-9); border-color: var(--accent-9);
+        }
+        .fd-editor .fd-cb-ind { color: white; display: flex; align-items: center; }
+
+        .fd-editor .fd-type-select {
+          font-size: 11px;
+          color: var(--gray-10);
+          background: var(--gray-3);
+          border: 1px solid var(--gray-6);
+          border-radius: 4px;
+          padding: 1px 4px;
+          cursor: pointer;
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
+        .fd-editor .fd-type-select:focus {
+          outline: 2px solid var(--accent-8);
+          outline-offset: 1px;
+        }
+        .fd-editor .fd-type-select:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .fd-editor .fd-del {
+          color: var(--gray-8); background: none; border: none;
+          cursor: pointer; padding: 2px; transition: color 100ms; line-height: 0;
+        }
+        .fd-editor .fd-del:hover { color: var(--red-9); }
       `}</style>
-      <table className="w-full border-collapse">
+
+      <table>
         <thead>
-          <tr className="border-b">
-            <th className="w-10 px-2 py-2"></th>
-            <th className="px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              Key
-            </th>
-            <th className="px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              Value
-            </th>
-            <th className="w-24 px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              Type
-            </th>
-            <th className="w-10 px-2 py-2"></th>
+          <tr>
+            <th style={{ width: 26 }} />
+            <th style={{ width: '32%' }}>Key</th>
+            <th style={{ width: '30%' }}>Value</th>
+            <th>Description</th>
+            <th style={{ width: 26 }} />
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => {
-            const isLastRow = index === formData.length;
+          {displayRows.map((row, index) => {
+            const isEmptyRow = index === formData.length;
+            const isActive = isEmptyRow && focusedRow === index;
+            const isEnabled = !row.disabled;
+            const isDisabled = !isEnabled && !isEmptyRow;
+
+            const rowKey = isEmptyRow ? 'add-row' : `fd-row-${index}`;
+            const rowClass = [
+              'fd-row',
+              isDisabled ? 'fd-row-disabled' : '',
+              isEmptyRow && !isActive ? 'fd-row-empty' : '',
+            ].filter(Boolean).join(' ');
+
             return (
-              <tr
-                key={index}
-                className={`form-data-row ${row.disabled && !isLastRow ? 'form-data-row-disabled' : ''}`}
-              >
-                <td className="px-2 py-1">
-                  {!isLastRow && (
-                    <input
-                      type="checkbox"
-                      checked={!row.disabled}
-                      onChange={(e) => handleChange(index, 'disabled', !e.target.checked)}
-                      className="form-data-checkbox rounded"
-                    />
+              <tr key={rowKey} className={rowClass}>
+                <td style={{ textAlign: 'center', width: 26 }}>
+                  {!isEmptyRow && (
+                    <Checkbox.Root
+                      checked={isEnabled}
+                      onCheckedChange={() => handleToggle(index)}
+                      className="fd-cb"
+                    >
+                      <Checkbox.Indicator className="fd-cb-ind">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <path d="M10 3L4.5 8.5L2 6"
+                            stroke="currentColor" strokeWidth="2"
+                            strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </Checkbox.Indicator>
+                    </Checkbox.Root>
                   )}
                 </td>
-                <td className="px-2 py-1">
-                  <TextField.Root
-                    size="1"
-                    value={row.key}
-                    onChange={(e) => handleChange(index, 'key', e.target.value)}
-                    placeholder={isLastRow ? 'Key' : ''}
-                    className="w-full"
-                  />
+
+                {/* Key with inline type selector as a suffix badge */}
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <TextField.Root
+                      size="1"
+                      ref={(el) => setInputRef(index, 'key', el)}
+                      value={row.key}
+                      onChange={(e) => handleChange(index, 'key', e.target.value)}
+                      onFocus={() => setFocusedRow(index)}
+                      onBlur={() => setFocusedRow(null)}
+                      placeholder={isEmptyRow ? 'Key' : ''}
+                      disabled={isDisabled}
+                      style={{ flex: 1, minWidth: 0 }}
+                    />
+                    {!isEmptyRow && (
+                      <select
+                        value={row.type}
+                        onChange={(e) => handleChange(index, 'type', e.target.value)}
+                        disabled={isDisabled}
+                        className="fd-type-select"
+                      >
+                        <option value="text">Text</option>
+                        <option value="binary">File</option>
+                      </select>
+                    )}
+                  </div>
                 </td>
-                <td className="px-2 py-1">
+
+                <td>
                   <TextField.Root
                     size="1"
+                    ref={(el) => setInputRef(index, 'value', el)}
                     value={row.value}
                     onChange={(e) => handleChange(index, 'value', e.target.value)}
-                    placeholder={row.type === 'binary' ? 'File path' : (isLastRow ? 'Value' : '')}
-                    className="w-full"
+                    onFocus={() => setFocusedRow(index)}
+                    onBlur={() => setFocusedRow(null)}
+                    placeholder={isEmptyRow ? 'Value' : (row.type === 'binary' ? 'File path' : '')}
+                    disabled={isDisabled}
+                    style={{ width: '100%' }}
                   />
                 </td>
-                <td className="px-2 py-1">
-                  <select
-                    value={row.type}
-                    onChange={(e) => handleChange(index, 'type', e.target.value)}
-                    className="form-data-select w-full px-2 py-1 text-sm rounded"
-                    disabled={isLastRow}
-                  >
-                    <option value="text">Text</option>
-                    <option value="binary">File</option>
-                  </select>
+
+                <td>
+                  <TextField.Root
+                    size="1"
+                    value={row.description || ''}
+                    onChange={(e) => handleChange(index, 'description', e.target.value)}
+                    onFocus={() => setFocusedRow(index)}
+                    onBlur={() => setFocusedRow(null)}
+                    placeholder={isEmptyRow ? 'Description' : ''}
+                    disabled={isDisabled}
+                    style={{ width: '100%' }}
+                  />
                 </td>
-                <td className="px-2 py-1 text-center">
-                  {!isLastRow && (
+
+                <td style={{ textAlign: 'center', width: 26 }}>
+                  {!isEmptyRow && (
                     <button
                       onClick={() => handleDelete(index)}
-                      className="form-data-delete inline-flex items-center justify-center"
+                      className="fd-del"
                       title="Delete"
                       type="button"
                     >
-                      <XMarkIcon className="w-4 h-4" />
+                      <TrashIcon style={{ width: 14, height: 14 }} />
                     </button>
                   )}
                 </td>

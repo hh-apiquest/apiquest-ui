@@ -14,6 +14,88 @@ export interface VariableResolverService {
 }
 
 /**
+ * A single user-editable header/param entry with enabled state.
+ * This is the persisted model for headers and params - using an array
+ * preserves insertion order, disabled state, and allows duplicate keys.
+ */
+export interface HeaderEntry {
+  key: string;
+  value: string;
+  enabled: boolean;
+  /** Optional description/comment for the header */
+  description?: string;
+}
+
+/**
+ * A generated (read-only) header entry derived from request state.
+ * Computed by the protocol plugin from body mode, auth type, etc.
+ * Never persisted - always derived.
+ */
+export interface GeneratedHeaderEntry {
+  key: string;
+  value: string;
+  /** TBD - Quick Actions, for now human-readable source attribution, e.g. "Body mode (urlencoded)", "Bearer auth" */
+  source: string;
+  /** Optional description/tooltip for this generated header */
+  description?: string;
+  /**
+   * Whether the user can edit this generated entry.
+   * true = shown but user cannot modify (e.g. Authorization from auth plugin)
+   * false (default) = shown and user can override by adding a manual entry with the same key
+   */
+  readonly?: boolean;
+}
+
+/**
+ * Transient UI state for the headers editor panel.
+ * Stored in request.data._ui.headersEditorState.
+ * Extensible: add new panel-level UI state here without a schema change.
+ */
+export interface HeadersEditorState {
+  /** Whether the generated (auto) headers section is expanded. Default: false. */
+  generatedVisible?: boolean;
+}
+
+/**
+ * Transient UI state for the params editor panel.
+ * Stored in request.data._ui.paramsEditorState.
+ * Extensible: add new panel-level UI state here without a schema change.
+ */
+export interface ParamsEditorState {
+  /** Whether the generated (auto) params section is expanded. Default: false. */
+  generatedVisible?: boolean;
+}
+
+/**
+ * A generated (read-only) query parameter entry derived from request state.
+ * Computed by the protocol plugin from auth type, etc.
+ * Never persisted - always derived. Mirrors GeneratedHeaderEntry for params.
+ */
+export interface GeneratedParamEntry {
+  key: string;
+  value: string;
+  /** Human-readable source attribution, e.g. "API Key auth" */
+  source: string;
+  /** Optional description/tooltip */
+  description?: string;
+  /** true = user cannot override via a manual entry */
+  readonly?: boolean;
+}
+
+/**
+ * A single user-editable query parameter entry with enabled state.
+ * Mirrors HeaderEntry for consistency. The execution layer uses Record<string,string>
+ * (only enabled, non-empty entries); this array is persisted in _ui.paramsRows.
+ */
+export interface ParamEntry {
+  key: string;
+  value: string;
+  enabled: boolean;
+  /** Optional description/comment for the parameter */
+  description?: string;
+}
+
+/**
  * Reactive UI State
  * Global app state that triggers re-renders when changed
  */
@@ -53,16 +135,32 @@ export interface PluginUIContext {
   
   // Reusable editor components from desktop
   Editors: {
-    // Headers editor (key-value with autocomplete)
+    // Headers editor (key-value with autocomplete, enable/disable, generated section)
     Headers: ComponentType<{
-      headers: Record<string, string>;
-      onChange: (headers: Record<string, string>) => void;
+      headers: HeaderEntry[];
+      onChange: (headers: HeaderEntry[]) => void;
+      /** Read-only generated headers from protocol plugin (body mode, auth, etc.) */
+      generatedHeaders?: GeneratedHeaderEntry[];
+      /**
+       * Controlled UI state for the headers editor panel.
+       * Stored in request.data._ui.headersEditorState so it survives tab switches.
+       * Extensible: add future panel states here without breaking existing code.
+       */
+      editorState?: HeadersEditorState;
+      /** Called when any editor panel state changes (e.g. visibility toggle). */
+      onEditorStateChange?: (state: HeadersEditorState) => void;
     }>;
     
-    // Query params editor (key-value with URL encoding)
+    // Query params editor (key-value with enable/disable, description column, generated params)
     Params: ComponentType<{
-      params: Record<string, string>;
-      onChange: (params: Record<string, string>) => void;
+      params: ParamEntry[];
+      onChange: (params: ParamEntry[]) => void;
+      /** Read-only generated query params from protocol plugin (auth type, etc.) */
+      generatedParams?: GeneratedParamEntry[];
+      /** Controlled editor panel state (stored in request.data._ui.paramsEditorState). */
+      editorState?: ParamsEditorState;
+      /** Called when any editor panel state changes (e.g. generated section toggle). */
+      onEditorStateChange?: (state: ParamsEditorState) => void;
     }>;
     
     // Form data editor (text/binary inputs)
@@ -100,18 +198,7 @@ export interface PluginUIContext {
   //   React.createElement(Radix.Table.Root, ...)
   //   React.createElement(Radix.Badge, ...)
   Radix: typeof import('@radix-ui/themes');
-  
-  // Heroicons for plugin UI
-  Icons: {
-    // Outline icons (24x24)
-    outline: any;
-    // Solid icons (20x20)
-    solid: any;
-    // Mini icons (12x12)
-    mini: any;
-  };
 
-  
   // Current theme
   theme: 'light' | 'dark';
 }
@@ -221,6 +308,7 @@ export interface IProtocolPluginUI {
     errors?: string[];
     warnings?: string[];
   };
+
 }
 
 /**

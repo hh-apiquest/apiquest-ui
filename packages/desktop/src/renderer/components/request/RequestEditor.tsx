@@ -210,7 +210,10 @@ export function RequestEditor({ tab }: RequestEditorProps) {
 
     const unregister = registerSaveHandler(tab.id, async () => {
       if (!request) return;
-      await updateRequest(tab.collectionId, tab.resourceId, request);
+      // Strip transient _ui state before persisting to the collection file
+      const { _ui: _uiToStrip, ...persistData } = request.data as any;
+      const requestToSave = { ...request, data: persistData };
+      await updateRequest(tab.collectionId, tab.resourceId, requestToSave);
       setDirty(tab.id, false);
       await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
@@ -222,10 +225,14 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     if (!workspace || !request) return;
     
     try {
+      // Strip transient _ui state (headersRows etc.) from session auto-save as well.
+      // _ui is only held in React state; the session state should match what would be
+      // written to the collection file on explicit save.
+      const { _ui: _uiToStrip, ...persistData } = request.data as any;
       await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
         name: request.name,
         description: request.description,
-        data: request.data,
+        data: persistData,
         // Normalize "inherit" to undefined - inherit is default behavior and shouldn't create session state
         auth: request.auth?.type === 'inherit' ? undefined : request.auth,
         preRequestScript: request.preRequestScript,

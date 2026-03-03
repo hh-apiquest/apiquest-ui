@@ -1,5 +1,5 @@
 import React from 'react';
-import type { IProtocolPluginUI, UITab, UITabProps, RequestBadge, SummaryLineComponent, ResponseUITab, ProtocolViewProps, RequestSummary } from '@apiquest/plugin-ui-types';
+import type { IProtocolPluginUI, UITab, UITabProps, RequestBadge, SummaryLineComponent, ResponseUITab, ProtocolViewProps, RequestSummary, HeaderEntry, GeneratedHeaderEntry, HeadersEditorState, ParamEntry, GeneratedParamEntry, ParamsEditorState } from '@apiquest/plugin-ui-types';
 import type { Request, ProtocolResponse } from '@apiquest/types';
 import type { HttpResponseData, HttpRequestData, HttpBodyData, HttpBodyKV } from '@apiquest/plugin-http';
 
@@ -173,22 +173,203 @@ function UrlBox({
 }
 
 
-function HttpParamsTab({ request, onChange, uiContext }: UITabProps) {
-  const params = (request.data as any)?.params || {};
-  return <uiContext.Editors.Params params={params} onChange={(newParams) => onChange({ ...request, data: { ...(request.data as any), params: newParams } })} />;
+/**
+ * Convert the stored Record<string,string> params to a ParamEntry[] for the editor.
+ * All imported entries start as enabled since disabled state is transient (_ui).
+ */
+function recordToParamEntries(record: Record<string, string> | undefined): ParamEntry[] {
+  if (!record) return [];
+  return Object.entries(record).map(([key, value]) => ({
+    key,
+    value,
+    description: '',
+    enabled: true,
+  }));
 }
 
-function HttpHeadersTab({ request, onChange, uiContext }: UITabProps) {
-  const headers = (request.data as any)?.headers || {};
-  return <uiContext.Editors.Headers headers={headers} onChange={(newHeaders) => onChange({ ...request, data: { ...(request.data as any), headers: newHeaders } })} />;
+/**
+ * Convert ParamEntry[] back to Record<string,string> for execution.
+ * Only enabled, non-empty entries are included.
+ */
+function paramEntriesToRecord(entries: ParamEntry[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const entry of entries) {
+    if (entry.enabled && entry.key.trim()) {
+      record[entry.key] = entry.value;
+    }
+  }
+  return record;
+}
+
+function HttpParamsTab({ request, onChange, uiContext }: UITabProps) {
+  const data = request.data as any;
+
+  // Read ParamEntry[] from transient _ui state; fall back to building from Record
+  const params: ParamEntry[] = data?._ui?.paramsRows
+    ? (data._ui.paramsRows as ParamEntry[])
+    : recordToParamEntries(data?.params);
+
+  // Compute generated (auto) params from auth - apikey in query injects a param
+  const generatedParams = React.useMemo((): GeneratedParamEntry[] => {
+    const result: GeneratedParamEntry[] = [];
+    const auth = request.auth as any;
+    if (auth?.type === 'apikey' && auth?.data?.in === 'query' && auth?.data?.key) {
+      result.push({
+        key: auth.data.key,
+        value: auth.data.value || '',
+        source: 'API Key auth',
+        readonly: true,
+      });
+    }
+    return result;
+  }, [request.auth]);
+
+  const paramsEditorState: ParamsEditorState = data?._ui?.paramsEditorState ?? {};
+
+  const handleChange = (newRows: ParamEntry[]) => {
+    onChange({
+      ...request,
+      data: {
+        ...data,
+        params: paramEntriesToRecord(newRows),
+        _ui: { ...(data?._ui ?? {}), paramsRows: newRows },
+      },
+    });
+  };
+
+  const handleEditorStateChange = (newState: ParamsEditorState) => {
+    onChange({
+      ...request,
+      data: {
+        ...data,
+        _ui: { ...(data?._ui ?? {}), paramsEditorState: newState },
+      },
+    });
+  };
+
+  return (
+    <uiContext.Editors.Params
+      params={params}
+      onChange={handleChange}
+      generatedParams={generatedParams}
+      editorState={paramsEditorState}
+      onEditorStateChange={handleEditorStateChange}
+    />
+  );
+}
+
+/**
+ * Convert the stored Record<string,string> headers to a HeaderEntry[] for the editor.
+ * All imported entries start as enabled since disabled state is transient (_ui).
+ */
+function recordToHeaderEntries(record: Record<string, string> | undefined): HeaderEntry[] {
+  if (!record) return [];
+  return Object.entries(record).map(([key, value]) => ({
+    key,
+    value,
+    description: '',
+    enabled: true,
+  }));
+}
+
+/**
+ * Convert HeaderEntry[] back to Record<string,string> for execution.
+ * Only enabled, non-empty entries are included.
+ */
+function headerEntriesToRecord(entries: HeaderEntry[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const entry of entries) {
+    if (entry.enabled && entry.key.trim()) {
+      record[entry.key] = entry.value;
+    }
+  }
+  return record;
+}
+
+/**
+ * Compute display-only generated headers from body mode and auth config.
+ * These are shown in the headers editor for user awareness only.
+ * The actual header injection at execution time is handled by the fracture plugin-http executor.
+ */
+function computeGeneratedHeaders(body: any, auth: any): GeneratedHeaderEntry[] {
+  const result: GeneratedHeaderEntry[] = [];
+
+  if (body?.mode === 'urlencoded') {
+    result.push({ key: 'Content-Type', value: 'application/x-www-form-urlencoded', source: 'Body mode (urlencoded)', readonly: true });
+  } else if (body?.mode === 'formdata') {
+    result.push({ key: 'Content-Type', value: 'multipart/form-data', source: 'Body mode (form-data)', readonly: true });
+  } else if (body?.mode === 'raw' && body.language) {
+    result.push({ key: 'Content-Type', value: body.language, source: 'Body mode (raw)', readonly: true });
+  }
+
+  if (auth?.type === 'bearer') {
+    result.push({ key: 'Authorization', value: 'Bearer', source: 'Bearer auth', readonly: true });
+  } else if (auth?.type === 'basic') {
+    result.push({ key: 'Authorization', value: 'Basic', source: 'Basic auth', readonly: true });
+  } else if (auth?.type === 'apikey' && auth?.data?.in === 'header' && auth?.data?.key) {
+    result.push({ key: auth.data.key, value: auth.data.value || '', source: 'API Key auth', readonly: true });
+  } else if (auth?.type === 'oauth2') {
+    result.push({ key: 'Authorization', value: 'Bearer', source: 'OAuth2', readonly: true });
+  }
+
+  return result;
+}
+
+function HttpHeadersTab({ request, onChange, uiContext, uiState }: UITabProps) {
+  const data = request.data as any;
+
+  // Read HeaderEntry[] from transient _ui state; fall back to building from Record
+  const headers: HeaderEntry[] = data?._ui?.headersRows
+    ? (data._ui.headersRows as HeaderEntry[])
+    : recordToHeaderEntries(data?.headers);
+
+  const generatedHeaders = React.useMemo(
+    () => computeGeneratedHeaders(data?.body, request.auth),
+    [data?.body, request.auth]
+  );
+
+  // Read headersEditorState from transient _ui (panel-level UI state - visibility toggles etc.)
+  const headersEditorState = data?._ui?.headersEditorState ?? {};
+
+  const handleChange = (newRows: HeaderEntry[]) => {
+    onChange({
+      ...request,
+      data: {
+        ...data,
+        // Execution-layer format: only enabled user-defined entries (no generated headers persisted)
+        headers: headerEntriesToRecord(newRows),
+        // Transient UI state: full rows including disabled
+        _ui: { ...(data?._ui ?? {}), headersRows: newRows },
+      },
+    });
+  };
+
+  const handleEditorStateChange = (newState: HeadersEditorState) => {
+    onChange({
+      ...request,
+      data: {
+        ...data,
+        _ui: { ...(data?._ui ?? {}), headersEditorState: newState },
+      },
+    });
+  };
+
+  return (
+    <uiContext.Editors.Headers
+      headers={headers}
+      onChange={handleChange}
+      generatedHeaders={generatedHeaders}
+      editorState={headersEditorState}
+      onEditorStateChange={handleEditorStateChange}
+    />
+  );
 }
 
 function HttpBodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
   const { Monaco, Editors } = uiContext;
+  const data = request.data as any;
 
-  // UI extends HttpBodyData with language for monaco editor
-  type UIHttpBodyData = HttpBodyData & { language?: string };
-  const body = ((request.data as any)?.body ?? {}) as UIHttpBodyData;
+  const body = (data?.body ?? {}) as HttpBodyData & { kv?: Array<{ key: string; value: string; type?: string; disabled?: boolean; description?: string }> };
   const [mode, setMode] = React.useState<string>(body.mode || 'none');
   const [rawLang, setRawLang] = React.useState<string>(body.language || 'text/plain');
 
@@ -197,6 +378,27 @@ function HttpBodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
     if (body.language !== rawLang) setRawLang(body.language || 'text/plain');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [body.mode, body.language]);
+
+  // Transient editor rows for formdata - separate from urlencoded
+  const formdataRows: UIFormDataKV[] = data?._ui?.formdataRows
+    ? (data._ui.formdataRows as UIFormDataKV[])
+    : (body.kv as UIFormDataKV[] || []).map((item: UIFormDataKV) => ({
+        key: item.key,
+        value: item.value,
+        type: item.type as 'text' | 'binary',
+        disabled: item.disabled ?? false,
+        description: item.description
+      }));
+
+  // Transient editor rows for urlencoded - separate from formdata
+  const urlencodedRows: UIUrlEncodedKV[] = data?._ui?.urlencodedRows
+    ? (data._ui.urlencodedRows as UIUrlEncodedKV[])
+    : (body.kv as UIUrlEncodedKV[] || []).map((item: UIUrlEncodedKV) => ({
+        key: item.key,
+        value: item.value,
+        disabled: item.disabled ?? false,
+        description: item.description
+      }));
 
   const modes = [
     { value: 'none', label: 'none' },
@@ -288,34 +490,45 @@ function HttpBodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
           />
         ) : mode === 'formdata' ? (
           <Editors.FormData
-            formData={(body.kv as UIFormDataKV[] || []).map(item => ({
-              key: item.key,
-              value: item.value,
-              type: item.type  as 'text' | 'binary',
-              disabled: item.disabled ?? false,
-              description: item.description
+            formData={formdataRows.map(r => ({
+              key: r.key,
+              value: r.value,
+              type: (r.type === 'binary' ? 'binary' : 'text') as 'text' | 'binary',
+              disabled: r.disabled ?? false,
+              description: r.description,
             }))}
-            onChange={(formdata: UIFormDataKV[]) => {
-              const kv: UIFormDataKV[] = formdata;
-              onChange({ ...request, data: { ...(request.data as any), body: { mode: 'formdata', language: rawLang, kv } } });
+            onChange={(newRows: UIFormDataKV[]) => {
+              // Execution layer: only enabled rows
+              const kv: UIFormDataKV[] = newRows.filter(r => !r.disabled && r.key.trim());
+              onChange({
+                ...request,
+                data: {
+                  ...data,
+                  body: { mode: 'formdata', language: rawLang, kv },
+                  _ui: { ...(data?._ui ?? {}), formdataRows: newRows },
+                },
+              });
             }}
           />
         ) : mode === 'urlencoded' ? (
           <Editors.UrlEncoded
-            data={(body.kv as UIUrlEncodedKV[] || []).map(item => ({
-              key: item.key,
-              value: item.value,
-              disabled: item.disabled ?? false,
-              description: item.description
+            data={urlencodedRows.map(r => ({
+              key: r.key,
+              value: r.value,
+              disabled: r.disabled ?? false,
+              description: r.description,
             }))}
-            onChange={(urlencoded: Array<{ key: string; value: string; disabled?: boolean; description?: string }>) => {
-              const kv: UIUrlEncodedKV[] = urlencoded.map(item => ({
-                key: item.key,
-                value: item.value,
-                disabled: item.disabled,
-                description: item.description
-              }));
-              onChange({ ...request, data: { ...(request.data as any), body: { mode: 'urlencoded', language: rawLang, kv } } });
+            onChange={(newRows: Array<{ key: string; value: string; disabled?: boolean; description?: string }>) => {
+              // Execution layer: only enabled rows
+              const kv: UIUrlEncodedKV[] = (newRows as UIUrlEncodedKV[]).filter(r => !r.disabled && r.key.trim());
+              onChange({
+                ...request,
+                data: {
+                  ...data,
+                  body: { mode: 'urlencoded', language: rawLang, kv },
+                  _ui: { ...(data?._ui ?? {}), urlencodedRows: newRows },
+                },
+              });
             }}
           />
         ) : null}
@@ -963,7 +1176,7 @@ export const httpPluginUI: IProtocolPluginUI = {
       { id: 'headers', label: 'Headers', position: 20, component: HttpResponseHeadersTab },
       { id: 'cookies', label: 'Cookies', position: 30, component: HttpResponseCookiesTab }
     ];
-  }
+  },
 };
 
 // Export as default for dynamic plugin loading

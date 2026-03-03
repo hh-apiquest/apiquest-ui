@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-http-ui",
-  "version": "1.0.2",
+  "version": "1.0.8",
   "description": "HTTP Protocol UI Plugin for ApiQuest Desktop",
   "type": "module",
   "main": "dist/index.js",
@@ -35,7 +35,7 @@
     }
   },
   "dependencies": {
-    "@apiquest/plugin-http": "^1.0.6"
+    "@apiquest/plugin-http": "^1.0.8"
   },
   "peerDependencies": {
     "@heroicons/react": "^2",

@@ -1,344 +1,388 @@
-// HeadersEditor - HTTP headers editor
-// Wrapper around KeyValueEditor with headers-specific features
-
 import React, { useState, useEffect, useRef } from 'react';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import { TextField } from '@radix-ui/themes';
-import { ChevronDownIcon, ChevronRightIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import type { HeaderEntry, GeneratedHeaderEntry, HeadersEditorState } from '@apiquest/plugin-ui-types';
 
 export interface HeadersEditorProps {
-  headers: Record<string, string>;
-  onChange: (headers: Record<string, string>) => void;
-  presetHeaders?: Record<string, string>;
+  /** Full editor model - HeaderEntry[] with enabled/disabled state. */
+  headers: HeaderEntry[];
+  /** Called on every change with the updated full row list (including disabled rows). */
+  onChange: (headers: HeaderEntry[]) => void;
+  /** Read-only generated headers from protocol plugin (body mode, auth, etc.). */
+  generatedHeaders?: GeneratedHeaderEntry[];
+  /**
+   * Controlled editor panel state (stored in request.data._ui.headersEditorState).
+   * If provided, the component operates in controlled mode for panel visibility.
+   */
+  editorState?: HeadersEditorState;
+  /** Called when any editor panel state changes (e.g. generated section toggle). */
+  onEditorStateChange?: (state: HeadersEditorState) => void;
 }
 
-interface KeyValueEditorProps {
-  data: Array<{ key: string; value: string; enabled: boolean }>;
-  onChange: (data: Array<{ key: string; value: string; enabled: boolean }>) => void;
-  placeholder?: { key: string; value: string };
-  allowDisable?: boolean;
-  allowDuplicates?: boolean;
-  // Optional callbacks for autocomplete suggestions
-  getKeySuggestions?: () => string[];
-  getValueSuggestions?: (key: string) => string[];
-}
-
-// Common HTTP headers for autocomplete
 const COMMON_HEADERS = [
-  'Accept',
-  'Accept-Charset',
-  'Accept-Encoding',
-  'Accept-Language',
-  'Authorization',
-  'Cache-Control',
-  'Connection',
-  'Content-Type',
-  'Content-Length',
-  'Cookie',
-  'DNT',
-  'Host',
-  'If-Modified-Since',
-  'If-None-Match',
-  'Origin',
-  'Pragma',
-  'Referer',
-  'User-Agent',
-  'X-Requested-With',
-  'X-CSRF-Token',
-  'X-API-Key',
+  'Accept', 'Accept-Charset', 'Accept-Encoding', 'Accept-Language',
+  'Authorization', 'Cache-Control', 'Connection', 'Content-Type',
+  'Content-Length', 'Cookie', 'DNT', 'Host', 'If-Modified-Since',
+  'If-None-Match', 'Origin', 'Pragma', 'Referer', 'User-Agent',
+  'X-Requested-With', 'X-CSRF-Token', 'X-API-Key',
 ];
 
-// Common values for specific headers
 const HEADER_VALUES: Record<string, string[]> = {
   'Content-Type': [
-    'application/json',
-    'application/xml',
-    'application/x-www-form-urlencoded',
-    'multipart/form-data',
-    'text/plain',
-    'text/html',
-    'text/xml',
+    'application/json', 'application/xml',
+    'application/x-www-form-urlencoded', 'multipart/form-data',
+    'text/plain', 'text/html', 'text/xml',
   ],
-  'Accept': [
-    'application/json',
-    'application/xml',
-    'text/plain',
-    'text/html',
-    '*/*',
-  ],
-  'Accept-Encoding': [
-    'gzip, deflate, br',
-    'gzip, deflate',
-    'gzip',
-  ],
-  'Accept-Language': [
-    'en-US,en;q=0.9',
-    'en',
-  ],
-  'Cache-Control': [
-    'no-cache',
-    'no-store',
-    'max-age=0',
-    'must-revalidate',
-  ],
-  'Connection': [
-    'keep-alive',
-    'close',
-  ],
+  'Accept': ['application/json', 'application/xml', 'text/plain', 'text/html', '*/*'],
+  'Accept-Encoding': ['gzip, deflate, br', 'gzip, deflate', 'gzip'],
+  'Accept-Language': ['en-US,en;q=0.9', 'en'],
+  'Cache-Control': ['no-cache', 'no-store', 'max-age=0', 'must-revalidate'],
+  'Connection': ['keep-alive', 'close'],
 };
 
-function KeyValueEditor({
-  data,
-  onChange,
-  placeholder = { key: 'Key', value: 'Value' },
-  allowDisable = true,
-  allowDuplicates = true,
-  getKeySuggestions,
-  getValueSuggestions
-}: KeyValueEditorProps) {
+export function HeadersEditor({ headers, onChange, generatedHeaders, editorState, onEditorStateChange }: HeadersEditorProps) {
+  // Controlled mode: use editorState from parent; uncontrolled: local state
+  const [localGeneratedVisible, setLocalGeneratedVisible] = useState(false);
+  const generatedVisible = editorState !== undefined
+    ? (editorState.generatedVisible ?? false)
+    : localGeneratedVisible;
+
+  const setGeneratedVisible = (v: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(generatedVisible) : v;
+    if (onEditorStateChange) {
+      onEditorStateChange({ ...(editorState ?? {}), generatedVisible: next });
+    } else {
+      setLocalGeneratedVisible(next);
+    }
+  };
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
 
   useEffect(() => {
-    // Restore focus after a new row is created
     if (pendingFocus.current) {
       const { index, field } = pendingFocus.current;
-      const key = `${index}-${field}`;
-      const input = inputRefs.current.get(key);
-      if (input) {
-        input.focus();
-        // Move cursor to end
-        const length = input.value.length;
-        input.setSelectionRange(length, length);
+      const el = inputRefs.current.get(`${index}-${field}`);
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
       }
       pendingFocus.current = null;
     }
-  }, [data.length]);
+  }, [headers.length]);
 
-  const handleChange = (index: number, field: 'key' | 'value', newValue: string) => {
-    const newData = [...data];
-
-    if (index >= newData.length) {
-      // Typing in the empty "add" row - create a new entry
-      newData.push({
-        key: field === 'key' ? newValue : '',
-        value: field === 'value' ? newValue : '',
-        enabled: true
-      });
-      // Schedule focus restoration to the newly created row
-      pendingFocus.current = { index: newData.length - 1, field };
-    } else {
-      // Updating existing row
-      newData[index] = { ...newData[index], [field]: newValue };
-    }
-
-    onChange(newData);
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
+    if (el) inputRefs.current.set(`${index}-${field}`, el);
+    else inputRefs.current.delete(`${index}-${field}`);
   };
 
-  const setInputRef = (index: number, field: 'key' | 'value', element: HTMLInputElement | null) => {
-    const key = `${index}-${field}`;
-    if (element) {
-      inputRefs.current.set(key, element);
+  const handleChange = (index: number, field: keyof HeaderEntry, value: string | boolean) => {
+    const next = [...headers];
+    if (index >= next.length) {
+      next.push({
+        key: field === 'key' ? String(value) : '',
+        value: field === 'value' ? String(value) : '',
+        description: field === 'description' ? String(value) : '',
+        enabled: true,
+      });
+      pendingFocus.current = {
+        index: next.length - 1,
+        field: field === 'description' ? 'key' : (field as 'key' | 'value'),
+      };
     } else {
-      inputRefs.current.delete(key);
+      next[index] = { ...next[index], [field]: value };
     }
+    onChange(next);
   };
 
   const handleToggle = (index: number) => {
-    const newData = [...data];
-    newData[index] = { ...newData[index], enabled: !newData[index].enabled };
-    onChange(newData);
+    const next = [...headers];
+    next[index] = { ...next[index], enabled: !next[index].enabled };
+    onChange(next);
   };
 
   const handleDelete = (index: number) => {
-    const newData = data.filter((_, i) => i !== index);
-    onChange(newData);
+    onChange(headers.filter((_, i) => i !== index));
   };
 
-  const handleFocus = (index: number) => {
-    setFocusedRow(index);
-  };
+  const genCount = generatedHeaders?.length ?? 0;
+  const hasGenerated = genCount > 0;
 
-  const handleBlur = () => {
-    setFocusedRow(null);
-  };
+  // Keys set by the user (enabled) - used to mark generated entries as overridden
+  const manualKeySet = new Set(
+    headers.filter(r => r.enabled && r.key.trim()).map(r => r.key.toLowerCase())
+  );
 
-  // Always show data rows + one empty row for adding
-  const displayRows = [...data, { key: '', value: '', enabled: true }];
+  // Add placeholder empty row at the end for new-entry UX
+  const displayRows = [...headers, { key: '', value: '', description: '', enabled: true }];
 
   return (
-    <div className="key-value-editor">
+    <div
+      className="hdr-editor"
+      style={{ fontFamily: 'inherit' }}
+    >
       <style>{`
-        .kv-row {
-          transition: opacity 150ms ease;
-        }
-        .kv-row-empty {
-          opacity: 0.4;
-        }
-        .kv-row-empty:hover {
-          opacity: 0.6;
-        }
-        .kv-row-disabled {
-          opacity: 0.5;
-        }
-        .kv-checkbox {
-          background: var(--color-background);
-          border-color: var(--gray-6);
-        }
-        .kv-checkbox:hover {
-          background: var(--gray-2);
-        }
-        .kv-checkbox[data-state="checked"] {
-          background: var(--accent-9);
-          border-color: var(--accent-9);
-        }
-        .kv-checkbox-indicator {
-          color: white;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .kv-input {
-          border: 1px solid var(--gray-6);
-          color: var(--gray-12);
-          background: transparent;
-        }
-        .kv-input:focus {
-          outline: 2px solid var(--accent-8);
-          outline-offset: 1px;
-        }
-        .kv-input:disabled {
-          cursor: not-allowed;
-          opacity: 0.5;
-        }
-        .kv-input-empty {
-          font-style: italic;
-        }
-        .kv-delete-button {
-          color: var(--gray-9);
-        }
-        .kv-delete-button:hover {
-          color: var(--red-9);
-        }
-      `}</style>
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b">
-            {allowDisable && (
-              <th className="w-10 px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              </th>
-            )}
-            <th className="px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              Key
-            </th>
-            <th className="px-2 py-2 text-left text-xs font-medium" style={{ color: 'var(--gray-9)' }}>
-              Value
-            </th>
-            <th className="w-10 px-2 py-2">
+        .hdr-editor table { width: 100%; border-collapse: collapse; }
 
+        /* Column header row */
+        .hdr-editor thead tr th {
+          text-align: left;
+          font-size: 11px;
+          font-weight: 500;
+          color: var(--gray-9);
+          padding: 4px 6px;
+          border-bottom: 1px solid var(--gray-6);
+          white-space: nowrap;
+        }
+
+        /* Data rows */
+        .hdr-editor tbody tr.hdr-row,
+        .hdr-editor tbody tr.gen-row {
+          border-bottom: 1px solid var(--gray-5);
+        }
+        .hdr-editor tbody tr td { padding: 2px 6px; }
+
+        /* Editable row states */
+        .hdr-editor .hdr-row { transition: opacity 130ms ease; }
+        .hdr-editor .hdr-row-empty { opacity: 0.38; }
+        .hdr-editor .hdr-row-empty:hover { opacity: 0.6; }
+        .hdr-editor .hdr-row-disabled { opacity: 0.4; }
+
+        /* Checkbox */
+        .hdr-editor .hdr-cb {
+          width: 14px; height: 14px; border-radius: 3px;
+          border: 1px solid var(--gray-7);
+          background: transparent; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
+        .hdr-editor .hdr-cb[data-state="checked"] {
+          background: var(--accent-9); border-color: var(--accent-9);
+        }
+        .hdr-editor .hdr-cb-ind { color: white; display: flex; align-items: center; }
+
+        /* Delete button */
+        .hdr-editor .hdr-del {
+          color: var(--gray-8); background: none; border: none;
+          cursor: pointer; padding: 2px; transition: color 100ms; line-height: 0;
+        }
+        .hdr-editor .hdr-del:hover { color: var(--red-9); }
+
+        /* Generated rows */
+        .hdr-editor .gen-row { background: var(--gray-2); }
+        .hdr-editor .gen-row td { font-size: 12px; color: var(--gray-9); }
+        .hdr-editor .gen-row-overridden { opacity: 0.45; }
+        .hdr-editor .gen-badge {
+          font-size: 10px; padding: 0 4px; border-radius: 3px; line-height: 16px;
+          background: var(--amber-4); color: var(--amber-11); border: 1px solid var(--amber-6);
+        }
+        .hdr-editor .gen-src { font-size: 11px; color: var(--gray-8); font-style: italic; }
+
+        /* Divider row between generated and editable sections */
+        .hdr-editor .gen-divider td {
+          padding: 0; height: 1px;
+          background: var(--gray-7);
+          border: none;
+        }
+
+        /* Generated toggle in the last th */
+        .hdr-editor .gen-toggle-btn {
+          display: inline-flex; align-items: center; gap: 4px;
+          background: none; border: none; padding: 0;
+          cursor: pointer; white-space: nowrap;
+          font-size: 11px; font-weight: 500; color: var(--gray-9);
+          transition: color 100ms;
+        }
+        .hdr-editor .gen-toggle-btn:hover { color: var(--gray-12); }
+        .hdr-editor .gen-toggle-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+
+        /* Readonly lock cell in generated rows */
+        .hdr-editor .gen-lock { line-height: 0; opacity: 0.5; }
+      `}</style>
+
+      <table>
+        <thead>
+          <tr>
+            {/* Checkbox / lock column */}
+            <th style={{ width: 26 }} />
+            <th style={{ width: '28%' }}>Key</th>
+            <th style={{ width: '30%' }}>Value</th>
+            <th>Description</th>
+            {/* The last column header holds the generated-visibility toggle */}
+            <th style={{ width: 26, textAlign: 'right' }}>
+              {hasGenerated && (
+                <button
+                  type="button"
+                  className="gen-toggle-btn"
+                  title={generatedVisible ? 'Hide generated headers' : 'Show generated headers'}
+                  onClick={() => setGeneratedVisible(v => !v)}
+                >
+                  {generatedVisible ? <EyeIcon /> : <EyeSlashIcon />}
+                  <span>{genCount}&nbsp;auto</span>
+                </button>
+              )}
             </th>
           </tr>
         </thead>
         <tbody>
+
+          {/* --- Generated (auto) header rows at the TOP, when visible --- */}
+          {hasGenerated && generatedVisible && (
+            <>
+              {generatedHeaders!.map((entry, i) => {
+                const isOverridden = manualKeySet.has(entry.key.toLowerCase());
+                return (
+                  <tr
+                    key={`gen-${i}`}
+                    className={`gen-row${isOverridden ? ' gen-row-overridden' : ''}`}
+                  >
+                    {/* Lock icon instead of checkbox */}
+                    <td className="gen-lock" style={{ textAlign: 'center' }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="var(--gray-9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </td>
+                    {/* Key - disabled input, same visual as editable rows */}
+                    <td>
+                      <TextField.Root
+                        size="1"
+                        value={entry.key}
+                        disabled
+                        readOnly
+                        style={{ width: '100%' }}
+                      />
+                    </td>
+                    {/* Value - disabled input, same visual as editable rows */}
+                    <td>
+                      <TextField.Root
+                        size="1"
+                        value={entry.value}
+                        disabled
+                        readOnly
+                        style={{ width: '100%' }}
+                      />
+                    </td>
+                    {/* Description / source / overridden badge */}
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="gen-src">{entry.source}</span>
+                        {entry.description && <span className="gen-src">— {entry.description}</span>}
+                        {isOverridden && <span className="gen-badge">overridden</span>}
+                      </span>
+                    </td>
+                    {/* Empty actions column */}
+                    <td />
+                  </tr>
+                );
+              })}
+              {/* Visual separator between generated and editable rows */}
+              <tr className="gen-divider">
+                <td colSpan={5} />
+              </tr>
+            </>
+          )}
+
+          {/* --- Editable user header rows --- */}
           {displayRows.map((row, index) => {
-            const isEmptyRow = index === data.length;
+            const isEmptyRow = index === headers.length;
             const isActive = isEmptyRow && focusedRow === index;
             const isDisabled = !row.enabled && !isEmptyRow;
 
-            // Use stable keys - for data rows use index, for empty row use special key
-            const rowKey = isEmptyRow ? 'empty-add-row' : `data-row-${index}`;
-            const rowClassName = [
-              'kv-row',
-              'border-b',
-              isDisabled ? 'kv-row-disabled' : '',
-              isEmptyRow && !isActive ? 'kv-row-empty' : ''
+            const rowKey = isEmptyRow ? 'add-row' : `hdr-row-${index}`;
+            const rowClass = [
+              'hdr-row',
+              isDisabled ? 'hdr-row-disabled' : '',
+              isEmptyRow && !isActive ? 'hdr-row-empty' : '',
             ].filter(Boolean).join(' ');
 
             return (
-              <tr
-                key={rowKey}
-                className={rowClassName}
-              >
-                {allowDisable && (
-                  <td className="px-2 py-1">
-                    {!isEmptyRow && (
-                      <Checkbox.Root
-                        checked={row.enabled}
-                        onCheckedChange={() => handleToggle(index)}
-                        className="kv-checkbox flex items-center justify-center w-4 h-4 rounded border"
-                      >
-                        <Checkbox.Indicator className="kv-checkbox-indicator">
-                          <svg
-                            className="w-3 h-3"
-                            viewBox="0 0 12 12"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            <path
-                              d="M10 3L4.5 8.5L2 6"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </Checkbox.Indicator>
-                      </Checkbox.Root>
-                    )}
-                  </td>
-                )}
-                <td className="px-2 py-1">
+              <tr key={rowKey} className={rowClass}>
+                {/* Checkbox */}
+                <td style={{ textAlign: 'center', width: 26 }}>
+                  {!isEmptyRow && (
+                    <Checkbox.Root
+                      checked={row.enabled}
+                      onCheckedChange={() => handleToggle(index)}
+                      className="hdr-cb"
+                    >
+                      <Checkbox.Indicator className="hdr-cb-ind">
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <path d="M10 3L4.5 8.5L2 6"
+                            stroke="currentColor" strokeWidth="2"
+                            strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </Checkbox.Indicator>
+                    </Checkbox.Root>
+                  )}
+                </td>
+
+                {/* Key */}
+                <td>
                   <TextField.Root
                     size="1"
                     ref={(el) => setInputRef(index, 'key', el)}
                     value={row.key}
                     onChange={(e) => handleChange(index, 'key', e.target.value)}
-                    onFocus={() => handleFocus(index)}
-                    onBlur={handleBlur}
-                    placeholder={isEmptyRow ? placeholder.key : ''}
+                    onFocus={() => setFocusedRow(index)}
+                    onBlur={() => setFocusedRow(null)}
+                    placeholder={isEmptyRow ? 'Header name' : ''}
                     disabled={isDisabled}
-                    list={getKeySuggestions ? `key-suggestions-${index}` : undefined}
-                    className={`w-full ${isEmptyRow ? 'kv-input-empty' : ''}`}
+                    list={`hdr-klist-${index}`}
+                    style={{ width: '100%' }}
                   />
-                  {getKeySuggestions && (
-                    <datalist id={`key-suggestions-${index}`}>
-                      {getKeySuggestions().map((suggestion, i) => (
-                        <option key={i} value={suggestion} />
-                      ))}
-                    </datalist>
-                  )}
+                  <datalist id={`hdr-klist-${index}`}>
+                    {COMMON_HEADERS.map(s => <option key={s} value={s} />)}
+                  </datalist>
                 </td>
-                <td className="px-2 py-1">
+
+                {/* Value */}
+                <td>
                   <TextField.Root
                     size="1"
                     ref={(el) => setInputRef(index, 'value', el)}
                     value={row.value}
                     onChange={(e) => handleChange(index, 'value', e.target.value)}
-                    onFocus={() => handleFocus(index)}
-                    onBlur={handleBlur}
-                    placeholder={isEmptyRow ? placeholder.value : ''}
+                    onFocus={() => setFocusedRow(index)}
+                    onBlur={() => setFocusedRow(null)}
+                    placeholder={isEmptyRow ? 'Value' : ''}
                     disabled={isDisabled}
-                    list={getValueSuggestions && row.key ? `value-suggestions-${index}` : undefined}
-                    className={`w-full ${isEmptyRow ? 'kv-input-empty' : ''}`}
+                    list={row.key && HEADER_VALUES[row.key] ? `hdr-vlist-${index}` : undefined}
+                    style={{ width: '100%' }}
                   />
-                  {getValueSuggestions && row.key && (
-                    <datalist id={`value-suggestions-${index}`}>
-                      {getValueSuggestions(row.key).map((suggestion, i) => (
-                        <option key={i} value={suggestion} />
-                      ))}
+                  {row.key && HEADER_VALUES[row.key] && (
+                    <datalist id={`hdr-vlist-${index}`}>
+                      {HEADER_VALUES[row.key].map(s => <option key={s} value={s} />)}
                     </datalist>
                   )}
                 </td>
-                <td className="px-2 py-1 text-center">
+
+                {/* Description */}
+                <td>
+                  <TextField.Root
+                    size="1"
+                    value={row.description || ''}
+                    onChange={(e) => handleChange(index, 'description', e.target.value)}
+                    onFocus={() => setFocusedRow(index)}
+                    onBlur={() => setFocusedRow(null)}
+                    placeholder={isEmptyRow ? 'Description' : ''}
+                    disabled={isDisabled}
+                    style={{ width: '100%' }}
+                  />
+                </td>
+
+                {/* Delete */}
+                <td style={{ textAlign: 'center', width: 26 }}>
                   {!isEmptyRow && (
                     <button
                       onClick={() => handleDelete(index)}
-                      className="kv-delete-button p-1 transition-colors"
+                      className="hdr-del"
                       title="Delete"
                       type="button"
                     >
-                      <TrashIcon className="w-4 h-4" />
+                      <TrashIcon style={{ width: 14, height: 14 }} />
                     </button>
                   )}
                 </td>
@@ -347,117 +391,6 @@ function KeyValueEditor({
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-export function HeadersEditor({ headers, onChange, presetHeaders }: HeadersEditorProps) {
-  // Maintain full data with enabled state internally
-  const [data, setData] = useState<Array<{ key: string; value: string; enabled: boolean }>>([]);
-  const [presetExpanded, setPresetExpanded] = useState(false);
-
-  // Initialize data from headers prop
-  useEffect(() => {
-    const newData = Object.entries(headers).map(([key, value]) => ({
-      key,
-      value,
-      enabled: true
-    }));
-    setData(newData);
-  }, [headers]);
-
-  const handleChange = (newData: Array<{ key: string; value: string; enabled: boolean }>) => {
-    // Store the full data including disabled rows
-    setData(newData);
-    
-    // Convert array back to object, only including enabled headers for the actual request
-    const newHeaders: Record<string, string> = {};
-    newData
-      .filter(item => item.enabled && item.key.trim() !== '')
-      .forEach(item => {
-        newHeaders[item.key] = item.value;
-      });
-    
-    onChange(newHeaders);
-  };
-
-  const getKeySuggestions = () => COMMON_HEADERS;
-
-  const getValueSuggestions = (key: string) => {
-    return HEADER_VALUES[key] || [];
-  };
-
-  const hasPresetHeaders = presetHeaders && Object.keys(presetHeaders).length > 0;
-
-  return (
-    <div className="headers-editor flex flex-col gap-2">
-      <style>{`
-        .preset-toggle {
-          color: var(--gray-11);
-        }
-        .preset-toggle:hover {
-          background: var(--gray-2);
-        }
-        .preset-row:last-child {
-          border-bottom: none;
-        }
-      `}</style>
-      {/* Preset Headers Section */}
-      {hasPresetHeaders && (
-        <div className="border rounded">
-          <button
-            onClick={() => setPresetExpanded(!presetExpanded)}
-            className="preset-toggle w-full flex items-center justify-between px-3 py-2 text-sm font-medium transition-colors"
-            type="button"
-          >
-            <span className="flex items-center gap-2">
-              {presetExpanded ? (
-                <ChevronDownIcon className="w-4 h-4" />
-              ) : (
-                <ChevronRightIcon className="w-4 h-4" />
-              )}
-              Preset Headers ({Object.keys(presetHeaders).length})
-            </span>
-            <span className="text-xs" style={{ color: 'var(--gray-9)' }}>
-              Auto-generated
-            </span>
-          </button>
-
-          {presetExpanded && (
-            <div className="border-t p-2">
-              <table className="w-full border-collapse">
-                <tbody>
-                  {Object.entries(presetHeaders).map(([key, value], index) => (
-                    <tr
-                      key={index}
-                      className="preset-row border-b"
-                    >
-                      <td className="px-2 py-1 text-sm font-mono" style={{ color: 'var(--gray-10)' }}>
-                        {key}
-                      </td>
-                      <td className="px-2 py-1 text-sm font-mono" style={{ color: 'var(--gray-9)' }}>
-                        {value}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* User Headers Section */}
-      <div>
-        <KeyValueEditor
-          data={data}
-          onChange={handleChange}
-          placeholder={{ key: 'Header name', value: 'Header value' }}
-          allowDisable={true}
-          getKeySuggestions={getKeySuggestions}
-          getValueSuggestions={getValueSuggestions}
-        />
-      </div>
     </div>
   );
 }

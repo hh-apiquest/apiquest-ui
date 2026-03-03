@@ -2,9 +2,6 @@ import React from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import BlackboardTheme from '../themes/Blackboard.json';
 import * as RadixThemes from '@radix-ui/themes';
-import * as HeroIconsOutline from '@heroicons/react/24/outline';
-import * as HeroIconsSolid from '@heroicons/react/24/solid';
-import * as HeroIconsMini from '@heroicons/react/20/solid';
 import type { PluginUIContext, VariableResolverService } from '@apiquest/plugin-ui-types';
 import { pluginManagerService } from './PluginManagerService';
 
@@ -123,11 +120,6 @@ class PluginLoaderService {
         UrlEncoded: UrlEncodedEditor
       },
       Radix: RadixThemes,
-      Icons: {
-        outline: HeroIconsOutline,
-        solid: HeroIconsSolid,
-        mini: HeroIconsMini
-      },
       theme: this.currentTheme
     };
   }

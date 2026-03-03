@@ -105,7 +105,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@apiquest/plugin-http-ui@workspace:packages/plugin-http-ui"
   dependencies:
-    "@apiquest/plugin-http": "npm:^1.0.6"
+    "@apiquest/plugin-http": "npm:^1.0.8"
     "@apiquest/plugin-ui-types": "workspace:*"
     "@apiquest/types": "npm:^1.0.0"
     "@types/react": "npm:^18.2.0"
@@ -121,16 +121,16 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@apiquest/plugin-http@npm:^1.0.6":
-  version: 1.0.6
-  resolution: "@apiquest/plugin-http@npm:1.0.6"
+"@apiquest/plugin-http@npm:^1.0.8":
+  version: 1.0.8
+  resolution: "@apiquest/plugin-http@npm:1.0.8"
   dependencies:
     form-data: "npm:^4.0.5"
     got: "npm:^14.6.6"
     hpagent: "npm:^1.2.0"
   peerDependencies:
     "@apiquest/types": ^1.0.0
-  checksum: 10c0/dc1563e1aa5e287da4690553b28c8ba72967942fb75a9e269955f1aa5731b904e3ca1873a7b7535a83006c5422ff1bc197c1e10bc3e2e55fc23a13fe62e3593a
+  checksum: 10c0/f452fda054ce889dbc4878651bf87996f857db211ef9a4ef22c35eebcd85d79786a6c2256da919651452721cb9943b0e05ecb7ac22dff393c9e74c5e511d5e8a
   languageName: node
   linkType: hard
 

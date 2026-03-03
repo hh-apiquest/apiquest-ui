@@ -1,7 +1,12 @@
 {
   "name": "@apiquest/desktop",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "Quest Desktop - API Testing Tool",
+  "author": {
+    "name": "HumanHub LLC",
+    "email": "support@apiquest.net"
+  },
+  "homepage": "https://apiquest.net",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
