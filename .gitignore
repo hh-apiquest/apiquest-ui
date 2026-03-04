@@ -4,11 +4,9 @@ packages/*/node_modules/
 
 # Build outputs
 packages/*/build/
-packages/*/.build-assets
 packages/*/dist/
 packages/*/out/
 packages/*/dist-installer/
-packages/*/electron-builder.yml
 *.tsbuildinfo
 
 # Logs
