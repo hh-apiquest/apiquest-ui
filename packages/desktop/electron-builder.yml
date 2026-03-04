@@ -1,24 +1,25 @@
 appId: com.apiquest.desktop
 productName: ApiQuest
-copyright: Copyright © 2026 ApiQuest
+copyright: Copyright © 2026 HumanHub LLC
 electronVersion: "40.1.0"
 
 # Directories
 directories:
   output: dist-installer
-  buildResources: build
+  buildResources: .build-assets/resources
 
-# Files to include
+# Files to include from the compiled output
 files:
   - out/**/*
   - package.json
 
-# Assets to exclude
+# Native node modules extracted from asar
 asarUnpack:
   - "**/*.node"
 
 # Windows configuration
 win:
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:
@@ -28,7 +29,7 @@ win:
       arch:
         - x64
   artifactName: ${productName}-Setup-${version}-${arch}.${ext}
-  icon: build/icon.ico
+  icon: .build-assets/resources/icon.ico
 
 nsis:
   oneClick: false
@@ -38,9 +39,6 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: ApiQuest
-  # Custom NSIS script: detects Git at install time and stores result in registry.
-  # Git is optional - used for future workspace version-control features.
-  include: build/nsis-prereq.nsh
 
 # macOS configuration
 mac:
@@ -54,12 +52,13 @@ mac:
         - x64
         - arm64
   category: public.app-category.developer-tools
-  icon: build/icon.icns
+  icon: .build-assets/resources/icon.icns
   hardenedRuntime: true
   gatekeeperAssess: false
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlements: .build-assets/resources/entitlements.mac.plist
+  entitlementsInherit: .build-assets/resources/entitlements.mac.plist
   artifactName: ${productName}-${version}-${arch}.${ext}
+  identity: null
 
 dmg:
   sign: false
@@ -88,17 +87,16 @@ linux:
         - x64
         - arm64
   category: Development
-  icon: build/icons
+  icon: .build-assets/resources/icons
   artifactName: ${productName}-${version}-${arch}.${ext}
   synopsis: API Testing and Development Tool
   description: A powerful API testing tool for developers
+  maintainer: HumanHub LLC <support@apiquest.net>
+  vendor: HumanHub LLC
 
 appImage:
-  license: LICENSE
+  license: ../../LICENSE
 
-# Debian package dependencies.
-# git is recommended (enables future workspace version-control features) but NOT mandatory.
-# npm/nodejs are NOT required because npm is bundled inside the application.
 deb:
   depends:
     - gconf2
@@ -107,24 +105,6 @@ deb:
     - libappindicator1
     - libxtst6
     - libnss3
-  recommends:
-    - git
 
-# RPM package dependencies (Fedora/RHEL/openSUSE).
-# Same rationale: git recommended, npm/nodejs not required.
-rpm:
-  depends:
-    - libnotify
-    - libXtst
-    - nss
-  recommends:
-    - git
-
-# Publishing (optional - configure when ready)
 publish: null
-
-# Compression
 compression: normal
-
-# Enable auto-update (configure when ready)
-# afterSign: build/notarize.js  # For macOS notarization
