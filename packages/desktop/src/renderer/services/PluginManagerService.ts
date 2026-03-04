@@ -198,56 +198,33 @@ export class PluginManagerService extends EventEmitter {
   }
 
   /**
-   * Get list of installed plugins with version info
+   * Get list of installed plugins with version info.
+   * Uses scannedPlugins as the source of truth so all discovered plugins
+   * (including disabled ones) appear in the Plugin Manager.
    */
   getInstalledPlugins(): InstalledPluginInfo[] {
     const plugins: InstalledPluginInfo[] = [];
-    const addedPackages = new Set<string>();
 
-    // Protocol plugins
-    for (const [protocol, plugin] of this.protocolPlugins.entries()) {
-      const packageName = `@apiquest/plugin-${protocol}-ui`;
-      
-      if (addedPackages.has(packageName)) continue;
-      addedPackages.add(packageName);
-      
-      const scanned = this.scannedPlugins.get(packageName);
-      
+    console.log(`[PluginManager] getInstalledPlugins: scannedPlugins has ${this.scannedPlugins.size} entries`);
+
+    for (const [packageName, scanned] of this.scannedPlugins.entries()) {
+      const type = scanned.metadata.type;
+      // Use the npm package name as the display name
+      const displayName = scanned.name || packageName;
+
+      console.log(`[PluginManager]   Plugin: ${packageName} type=${type} enabled=${scanned.enabled} v${scanned.version}`);
+
       plugins.push({
         id: packageName,
-        name: `${protocol.toUpperCase()} Plugin`,
-        version: scanned?.version || '1.0.0',
-        type: 'protocol',
-        protocol,
-        enabled: scanned?.enabled ?? true,
+        name: displayName,
+        version: scanned.version,
+        type,
+        enabled: scanned.enabled,
         bundled: false
       });
     }
 
-    // Auth plugins - one row per package (auth plugin can export multiple auth types)
-    const authPackages = new Set<string>();
-    for (const [type, plugin] of this.authPlugins.entries()) {
-      const packageName = `@apiquest/plugin-auth-ui`;
-      authPackages.add(packageName);
-    }
-    
-    for (const packageName of authPackages) {
-      if (addedPackages.has(packageName)) continue;
-      addedPackages.add(packageName);
-      
-      const scanned = this.scannedPlugins.get(packageName);
-      const authTypes = this.getSupportedAuthTypes();
-      
-      plugins.push({
-        id: packageName,
-        name: `Auth Plugin (${authTypes.join(', ')})`,
-        version: scanned?.version || '1.0.0',
-        type: 'auth',
-        enabled: scanned?.enabled ?? true,
-        bundled: false
-      });
-    }
-
+    console.log(`[PluginManager] getInstalledPlugins: returning ${plugins.length} plugins`);
     return plugins;
   }
 

@@ -38,6 +38,9 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: ApiQuest
+  # Custom NSIS script: detects Git at install time and stores result in registry.
+  # Git is optional - used for future workspace version-control features.
+  include: build/nsis-prereq.nsh
 
 # macOS configuration
 mac:
@@ -93,6 +96,9 @@ linux:
 appImage:
   license: LICENSE
 
+# Debian package dependencies.
+# git is recommended (enables future workspace version-control features) but NOT mandatory.
+# npm/nodejs are NOT required because npm is bundled inside the application.
 deb:
   depends:
     - gconf2
@@ -101,6 +107,18 @@ deb:
     - libappindicator1
     - libxtst6
     - libnss3
+  recommends:
+    - git
+
+# RPM package dependencies (Fedora/RHEL/openSUSE).
+# Same rationale: git recommended, npm/nodejs not required.
+rpm:
+  depends:
+    - libnotify
+    - libXtst
+    - nss
+  recommends:
+    - git
 
 # Publishing (optional - configure when ready)
 publish: null

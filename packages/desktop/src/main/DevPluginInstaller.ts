@@ -6,9 +6,10 @@
  */
 
 import { app } from 'electron';
-import { copyFile, mkdir, readdir, stat } from 'fs/promises';
+import { copyFile, mkdir, readdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { settingsService } from './SettingsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,40 +45,61 @@ export async function installWorkspacePlugins(): Promise<void> {
   }
 
   console.log('[DevInstaller] Starting workspace plugin installation...');
-  
+
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
   await mkdir(pluginsDir, { recursive: true });
-  
+
   console.log(`[DevInstaller] Target directory: ${pluginsDir}`);
 
+  // Read settings to check which plugins have been explicitly disabled/removed by the user
+  let disabledPlugins: Set<string> = new Set();
+  try {
+    const settings = await settingsService.getAll();
+    const pluginSettings = Array.isArray(settings.plugins) ? settings.plugins : [];
+    disabledPlugins = new Set(
+      pluginSettings.filter(p => p.enabled === false).map(p => p.name)
+    );
+    if (disabledPlugins.size > 0) {
+      console.log(`[DevInstaller] Skipping disabled plugins: ${Array.from(disabledPlugins).join(', ')}`);
+    }
+  } catch (err) {
+    console.warn('[DevInstaller] Could not read plugin settings, proceeding with full install');
+  }
+
   for (const pluginName of WORKSPACE_UI_PLUGINS) {
+    // Skip plugins that the user has explicitly disabled/removed
+    if (disabledPlugins.has(pluginName)) {
+      console.log(`[DevInstaller] Skipping disabled plugin: ${pluginName}`);
+      continue;
+    }
+
     try {
       // Convert @apiquest/plugin-http-ui -> plugin-http-ui
       const folderName = pluginName.replace('@apiquest/', '');
-      
+
       // Source: packages/plugin-http-ui/
       const sourcePath = path.resolve(__dirname, '../../../', folderName);
-      
+
       // Destination: appData/plugins/plugin-http-ui/
       const destPath = path.join(pluginsDir, folderName);
-      
+
       console.log(`[DevInstaller] Installing ${pluginName}...`);
       console.log(`[DevInstaller]   Source: ${sourcePath}`);
       console.log(`[DevInstaller]   Dest:   ${destPath}`);
-      
+
       // Create destination directory
       await mkdir(destPath, { recursive: true });
-      
+
       // Always copy package.json (metadata might have changed)
       await copyFile(
         path.join(sourcePath, 'package.json'),
         path.join(destPath, 'package.json')
       );
-      
+
       // Copy dist/ folder recursively
       const distSource = path.join(sourcePath, 'dist');
       const distDest = path.join(destPath, 'dist');
-      
+
       try {
         await copyRecursive(distSource, distDest);
         console.log(`[DevInstaller] Installed: ${pluginName}`);
@@ -88,7 +110,7 @@ export async function installWorkspacePlugins(): Promise<void> {
           throw error;
         }
       }
-      
+
     } catch (error: any) {
       console.error(`[DevInstaller] Failed to install ${pluginName}:`, error.message);
       // Continue with other plugins
@@ -96,6 +118,13 @@ export async function installWorkspacePlugins(): Promise<void> {
   }
 
   for (const pluginName of WORKSPACE_CORE_PLUGINS) {
+    // Core plugins (fracture runtime) are not managed by this installer for desktop use
+    // Skip disabled ones
+    if (disabledPlugins.has(pluginName)) {
+      console.log(`[DevInstaller] Skipping disabled core plugin: ${pluginName}`);
+      continue;
+    }
+
     try {
       const folderName = pluginName.replace('@apiquest/', '');
       const sourcePath = path.resolve(__dirname, '../../../../../fracture/packages', folderName);
@@ -129,7 +158,7 @@ export async function installWorkspacePlugins(): Promise<void> {
       console.error(`[DevInstaller] Failed to install ${pluginName}:`, error.message);
     }
   }
-  
+
   console.log('[DevInstaller] Plugin installation complete');
 }
 

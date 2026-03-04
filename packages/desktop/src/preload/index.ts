@@ -153,7 +153,18 @@ const api = {
   plugins: {
     ensureDevInstalled: () => ipcRenderer.invoke('plugins:ensureDevInstalled'),
     scan: () => ipcRenderer.invoke('plugins:scan'),
-    install: (packageNameOrUrl: string) => ipcRenderer.invoke('plugins:install', packageNameOrUrl),
+    /**
+     * Check whether npm and git are available on the system PATH.
+     * Returns { npm: string|null, git: string|null } where string is the version.
+     */
+    checkTools: (): Promise<{ npm: string | null; git: string | null }> =>
+      ipcRenderer.invoke('plugins:checkTools'),
+    /**
+     * Install a plugin by npm package name.
+     * Returns { success: true } or { success: false, error: string }.
+     */
+    install: (packageNameOrUrl: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('plugins:install', packageNameOrUrl),
     remove: (pluginName: string) => ipcRenderer.invoke('plugins:remove', pluginName),
     searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all') => ipcRenderer.invoke('plugins:searchMarketplace', query, type),
   },

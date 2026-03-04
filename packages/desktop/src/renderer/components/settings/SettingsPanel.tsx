@@ -3,10 +3,17 @@ import { Tabs, Text, Box } from '@radix-ui/themes';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { useScreenMode } from '../../contexts';
 import { PluginManager } from '../plugins/PluginManager';
+import { ToolsSettings } from './ToolsSettings';
 
 export function SettingsPanel() {
-  const { setMode } = useScreenMode();
-  
+  const { setMode, settingsInitialTab } = useScreenMode();
+  const [activeTab, setActiveTab] = React.useState(settingsInitialTab);
+
+  // When settings are opened to a specific tab, sync the active tab
+  React.useEffect(() => {
+    setActiveTab(settingsInitialTab);
+  }, [settingsInitialTab]);
+
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--gray-1)' }}>
       {/* Top Bar with Back Button */}
@@ -28,7 +35,7 @@ export function SettingsPanel() {
       
      <div className="flex flex-1 overflow-hidden">
       {/* Vertical tabs on the left */}
-      <Tabs.Root defaultValue="general" orientation="vertical" className="flex h-full w-full">
+      <Tabs.Root value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} orientation="vertical" className="flex h-full w-full">
         <Tabs.List 
           className="flex flex-col border-r" 
           style={{ 
@@ -50,19 +57,25 @@ export function SettingsPanel() {
           >
             General
           </Tabs.Trigger>
-          <Tabs.Trigger 
+          <Tabs.Trigger
             value="plugins"
             className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
           >
             Plugins
           </Tabs.Trigger>
-          <Tabs.Trigger 
+          <Tabs.Trigger
+            value="tools"
+            className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
+          >
+            Tools
+          </Tabs.Trigger>
+          <Tabs.Trigger
             value="appearance"
             className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
           >
             Appearance
           </Tabs.Trigger>
-          <Tabs.Trigger 
+          <Tabs.Trigger
             value="shortcuts"
             className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
           >
@@ -81,6 +94,10 @@ export function SettingsPanel() {
 
           <Tabs.Content value="plugins" className="h-full overflow-hidden">
             <PluginManager />
+          </Tabs.Content>
+
+          <Tabs.Content value="tools" className="h-full overflow-auto p-6">
+            <ToolsSettings />
           </Tabs.Content>
 
           <Tabs.Content value="appearance" className="h-full overflow-auto p-6">

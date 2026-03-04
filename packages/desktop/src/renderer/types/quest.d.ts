@@ -212,7 +212,10 @@ declare global {
       plugins: {
         ensureDevInstalled: () => Promise<void>;
         scan: () => Promise<ScannedPlugin[]>;
-        install: (packageNameOrUrl: string) => Promise<boolean>;
+        /** Check whether npm (bundled) and git (system) are available. */
+        checkTools: () => Promise<{ npm: string | null; git: string | null }>;
+        /** Install a plugin from npm. Returns { success } or { success: false, error }. */
+        install: (packageNameOrUrl: string) => Promise<{ success: boolean; error?: string }>;
         remove: (pluginName: string) => Promise<boolean>;
         searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all') => Promise<MarketplacePlugin[]>;
       };

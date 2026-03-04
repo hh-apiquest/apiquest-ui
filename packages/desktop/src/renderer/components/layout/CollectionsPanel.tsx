@@ -1,18 +1,20 @@
 // CollectionsPanel - Collections tree with all collection management logic
 import { useState, useEffect, useRef } from 'react';
-import { useWorkspace, useTabNavigation } from '../../contexts';
+import { useWorkspace, useTabNavigation, useScreenMode } from '../../contexts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { TextField, Button, Badge } from '@radix-ui/themes';
 import {
   PlusIcon,
   FolderPlusIcon,
+  FolderIcon,
   EllipsisVerticalIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  FolderIcon,
   ExclamationTriangleIcon,
   ArrowUpTrayIcon,
-  RectangleStackIcon
+  RectangleStackIcon,
+  PuzzlePieceIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import { pluginManagerService, pluginLoader } from '../../services';
 import type { Variable } from '@apiquest/types';
@@ -24,10 +26,30 @@ import { RequestMetadataIcons } from '../shared/RequestMetadataIcons';
 
 export function CollectionsPanel() {
   const { workspace, refreshWorkspace } = useWorkspace();
+  const { setMode } = useScreenMode();
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [activeRenameId, setActiveRenameId] = useState<string | null>(null);
   const [inlineRenameValue, setInlineRenameValue] = useState('');
+  // True when at least one protocol plugin is installed and enabled (active).
+  // Used to show/hide the "No protocol plugins enabled" banner.
+  const [hasProtocolPlugins, setHasProtocolPlugins] = useState(
+    () => pluginManagerService.getAllProtocolPlugins().length > 0
+  );
+
+  useEffect(() => {
+    const checkPlugins = () => {
+      setHasProtocolPlugins(pluginManagerService.getAllProtocolPlugins().length > 0);
+    };
+    pluginManagerService.on('pluginsReloaded', checkPlugins);
+    pluginManagerService.on('pluginsLoaded', checkPlugins);
+    pluginManagerService.on('protocolPluginRegistered', checkPlugins);
+    return () => {
+      pluginManagerService.off('pluginsReloaded', checkPlugins);
+      pluginManagerService.off('pluginsLoaded', checkPlugins);
+      pluginManagerService.off('protocolPluginRegistered', checkPlugins);
+    };
+  }, []);
 
   if (!workspace) return null;
 
@@ -78,12 +100,54 @@ export function CollectionsPanel() {
       </div>
 
       <div style={{ flex: 1, overflow: 'auto' }} onClick={handlePanelClick}>
-        {workspace.collections.length === 0 ? (
+        {/* No plugins installed banner - shown on clean install before any plugins are added */}
+        {!hasProtocolPlugins && (
+          <div style={{
+            margin: '8px',
+            padding: '12px',
+            background: 'var(--amber-3)',
+            borderRadius: '6px',
+            border: '1px solid var(--amber-6)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <PuzzlePieceIcon style={{ width: '14px', height: '14px', color: 'var(--amber-11)', flexShrink: 0 }} />
+              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--amber-11)' }}>No protocol plugins installed or enabled</span>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--gray-11)', lineHeight: 1.4 }}>
+              Install and enable a protocol plugin to start creating collections and making API requests.
+            </div>
+            <button
+              onClick={() => setMode('settings', 'plugins')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                fontWeight: 500,
+                background: 'var(--accent-9)',
+                color: 'white',
+                borderRadius: '4px',
+                border: 'none',
+                cursor: 'pointer',
+                alignSelf: 'flex-start'
+              }}
+            >
+              <Cog6ToothIcon style={{ width: '12px', height: '12px' }} />
+              Open Settings - Plugins
+            </button>
+          </div>
+        )}
+
+        {workspace.collections.length === 0 && hasProtocolPlugins ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '128px', textAlign: 'center' }}>
             <div style={{ fontSize: '12px', color: 'var(--gray-9)', marginBottom: '8px' }}>No collections</div>
             <div style={{ fontSize: '10px', color: 'var(--gray-9)' }}>Click + to create one</div>
           </div>
-        ) : (
+        ) : workspace.collections.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '8px' }}>
             {workspace.collections
               .filter(c => !searchQuery || c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -91,8 +155,8 @@ export function CollectionsPanel() {
                 return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
               })
               .map((collection) => (
-                <CollectionItem 
-                  key={collection.id} 
+                <CollectionItem
+                  key={collection.id}
                   collection={collection}
                   activeRenameId={activeRenameId}
                   setActiveRenameId={setActiveRenameId}
@@ -101,7 +165,7 @@ export function CollectionsPanel() {
                 />
               ))}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* New Collection Dialog */}
@@ -1082,14 +1146,16 @@ function CollectionRequestItem({
   );
 }
 
-function NewCollectionDialog({ open, onOpenChange }: { 
-  open: boolean; 
+function NewCollectionDialog({ open, onOpenChange }: {
+  open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const protocols = pluginManagerService.getAllProtocolPlugins();
+  const hasProtocols = protocols.length > 0;
   const [name, setName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const { workspace, refreshWorkspace } = useWorkspace();
+  const { setMode } = useScreenMode();
 
   const handleCreate = async (protocol: string) => {
     if (!workspace || !name.trim()) return;
@@ -1113,6 +1179,11 @@ function NewCollectionDialog({ open, onOpenChange }: {
     }
   };
 
+  const handleGoToPlugins = () => {
+    onOpenChange(false);
+    setMode('settings', 'plugins');
+  };
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
         <Dialog.Overlay style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.5)', zIndex: 50 }} />
@@ -1123,47 +1194,80 @@ function NewCollectionDialog({ open, onOpenChange }: {
           <Dialog.Description style={{ fontSize: '12px', color: 'var(--gray-9)', marginBottom: '16px' }}>
             Create a new API collection
           </Dialog.Description>
-          
-          {/* Collection Name */}
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--gray-12)', marginBottom: '4px' }}>Name</label>
-            <TextField.Root
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My API"
-              size="1"
-              autoFocus
-            />
-          </div>
 
-          {/* Protocol Selection */}
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--gray-12)', marginBottom: '8px' }}>Protocol</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {protocols.map((plugin) => (
-                <button
-                  key={plugin.protocol}
-                  onClick={() => handleCreate(plugin.protocol)}
-                  disabled={!name.trim() || isCreating}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', fontSize: '12px', background: 'transparent', borderRadius: '6px', border: '1px solid var(--gray-6)', cursor: !name.trim() || isCreating ? 'not-allowed' : 'pointer', opacity: !name.trim() || isCreating ? 0.5 : 1 }}
-                >
-                  <span style={{ fontSize: '16px' }}>{plugin.icon}</span>
-                  <div style={{ flex: 1, textAlign: 'left' }}>
-                    {/* <div className="font-medium text-gray-900 dark:text-white">{plugin.name}</div> */}
-                    <div style={{ fontSize: '10px', color: 'var(--gray-9)' }}>{plugin.protocol.toUpperCase()} Collection</div>
-                  </div>
-                </button>
-              ))}
+          {!hasProtocols ? (
+            /* No protocol plugins installed */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{
+                padding: '12px',
+                background: 'var(--amber-3)',
+                border: '1px solid var(--amber-6)',
+                borderRadius: '6px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <PuzzlePieceIcon style={{ width: '14px', height: '14px', color: 'var(--amber-11)', flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--amber-11)' }}>No protocol plugins installed</span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--gray-11)', margin: 0, lineHeight: 1.5 }}>
+                  A protocol plugin is required to create a collection. Install one from the Plugin Manager to get started.
+                </p>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <Dialog.Close asChild>
+                  <Button variant="soft" size="1">Cancel</Button>
+                </Dialog.Close>
+                <Button size="1" onClick={handleGoToPlugins}>
+                  <Cog6ToothIcon style={{ width: '12px', height: '12px' }} />
+                  Open Plugin Manager
+                </Button>
+              </div>
             </div>
-          </div>
-          
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Dialog.Close asChild>
-              <Button variant="soft" size="1">
-                Cancel
-              </Button>
-            </Dialog.Close>
-          </div>
+          ) : (
+            <>
+              {/* Collection Name */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--gray-12)', marginBottom: '4px' }}>Name</label>
+                <TextField.Root
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="My API"
+                  size="1"
+                  autoFocus
+                />
+              </div>
+
+              {/* Protocol Selection */}
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: 'var(--gray-12)', marginBottom: '8px' }}>Protocol</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {protocols.map((plugin) => (
+                    <button
+                      key={plugin.protocol}
+                      onClick={() => handleCreate(plugin.protocol)}
+                      disabled={!name.trim() || isCreating}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', fontSize: '12px', background: 'transparent', borderRadius: '6px', border: '1px solid var(--gray-6)', cursor: !name.trim() || isCreating ? 'not-allowed' : 'pointer', opacity: !name.trim() || isCreating ? 0.5 : 1 }}
+                    >
+                      <span style={{ fontSize: '16px' }}>{plugin.icon}</span>
+                      <div style={{ flex: 1, textAlign: 'left' }}>
+                        <div style={{ fontSize: '10px', color: 'var(--gray-9)' }}>{plugin.protocol.toUpperCase()} Collection</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Dialog.Close asChild>
+                  <Button variant="soft" size="1">
+                    Cancel
+                  </Button>
+                </Dialog.Close>
+              </div>
+            </>
+          )}
         </Dialog.Content>
     </Dialog.Root>
   );

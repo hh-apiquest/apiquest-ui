@@ -5,12 +5,11 @@ import {
   TextField,
   Badge,
   Table,
-  Dialog,
   Flex,
   Box,
   Switch,
   IconButton,
-  Card,
+  Spinner,
   Tabs
 } from '@radix-ui/themes';
 import {
@@ -37,11 +36,8 @@ type PluginTypeFilter = Extract<
   > | 'all';
 
 interface PluginManagerProps {
-  // Optional filter to show specific plugin type
   pluginType?: PluginTypeFilter;
-  // Optional initial search query (e.g., specific protocol/auth name)
   initialSearch?: string;
-  // Optional callback when a plugin is installed
   onPluginInstalled?: (pluginId: string) => void;
 }
 
@@ -51,33 +47,50 @@ export function PluginManager({
   onPluginInstalled
 }: PluginManagerProps = {}) {
   const [installedPlugins, setInstalledPlugins] = React.useState<InstalledPluginInfo[]>([]);
-  const [searchQuery, setSearchQuery] = React.useState(initialSearch);
-  const [installing, setInstalling] = React.useState(false);
+  const [installedSearchQuery, setInstalledSearchQuery] = React.useState(initialSearch);
+  const [installing, setInstalling] = React.useState<string | null>(null);
+  const [installError, setInstallError] = React.useState<string | null>(null);
   const [activeTab, setActiveTab] = React.useState('installed');
   const [selectedType, setSelectedType] = React.useState<PluginTypeFilter>(pluginType);
 
-  // Marketplace state
-  const [marketplacePlugins, setMarketplacePlugins] = React.useState<any[]>([]);
-  const [searchingMarketplace, setSearchingMarketplace] = React.useState(false);
+  // Marketplace: full list from npm, filtered client-side
+  const [allMarketplacePlugins, setAllMarketplacePlugins] = React.useState<any[]>([]);
+  const [marketplaceLoaded, setMarketplaceLoaded] = React.useState(false);
+  const [loadingMarketplace, setLoadingMarketplace] = React.useState(false);
+  const [marketplaceSearchQuery, setMarketplaceSearchQuery] = React.useState('');
 
   React.useEffect(() => {
     loadInstalledPlugins();
-
-    // Listen for plugin changes
-    const handlePluginsReloaded = () => {
-      loadInstalledPlugins();
-    };
-
+    const handlePluginsReloaded = () => loadInstalledPlugins();
     pluginManagerService.on('pluginsReloaded', handlePluginsReloaded);
-
     return () => {
       pluginManagerService.off('pluginsReloaded', handlePluginsReloaded);
     };
   }, []);
 
+  // Auto-load marketplace on first visit to that tab
+  React.useEffect(() => {
+    if (activeTab === 'marketplace' && !marketplaceLoaded) {
+      loadMarketplace();
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadInstalledPlugins = () => {
-    const plugins = pluginManagerService.getInstalledPlugins();
-    setInstalledPlugins(plugins);
+    setInstalledPlugins(pluginManagerService.getInstalledPlugins());
+  };
+
+  const loadMarketplace = async () => {
+    setLoadingMarketplace(true);
+    try {
+      const results = await window.quest.plugins.searchMarketplace('', 'all');
+      setAllMarketplacePlugins(results);
+      setMarketplaceLoaded(true);
+    } catch (err) {
+      console.error('[PluginManager] Failed to load marketplace:', err);
+      setAllMarketplacePlugins([]);
+    } finally {
+      setLoadingMarketplace(false);
+    }
   };
 
   const handleTogglePlugin = async (pluginId: string, enabled: boolean) => {
@@ -90,62 +103,48 @@ export function PluginManager({
   };
 
   const handleInstallPlugin = async (packageName: string) => {
-    setInstalling(true);
+    setInstalling(packageName);
+    setInstallError(null);
     try {
-      // Call IPC to install plugin from npm
-      const success = await window.quest.plugins.install(packageName);
-      if (success) {
-        console.log('Plugin installed:', packageName);
+      const result = await window.quest.plugins.install(packageName);
+      if (result.success) {
         await pluginManagerService.reloadPlugins();
         loadInstalledPlugins();
         onPluginInstalled?.(packageName);
       } else {
-        console.error('Failed to install plugin');
+        setInstallError(result.error || 'Installation failed for an unknown reason.');
       }
-    } catch (err) {
-      console.error('Failed to install plugin:', err);
+    } catch (err: any) {
+      setInstallError(err?.message || 'Unexpected error during plugin installation.');
     } finally {
-      setInstalling(false);
+      setInstalling(null);
     }
   };
 
   const handleUninstallPlugin = async (pluginId: string) => {
+    console.log('[PluginManager] Uninstalling plugin:', pluginId);
     try {
-      const success = await window.quest.plugins.remove(pluginId);
-      if (success) {
-        await pluginManagerService.reloadPlugins();
-        loadInstalledPlugins();
-      }
+      await window.quest.plugins.remove(pluginId);
+      await pluginManagerService.reloadPlugins();
+      loadInstalledPlugins();
     } catch (err) {
-      console.error('Failed to uninstall plugin:', err);
+      console.error('[PluginManager] Failed to uninstall plugin:', err);
     }
   };
 
-  const handleSearchMarketplace = async () => {
-    setSearchingMarketplace(true);
-    try {
-      // Search npmjs for @apiquest/* packages
-      const query = searchQuery || (selectedType !== 'all' ? `plugin-${selectedType}` : '');
-      const results = await window.quest.plugins.searchMarketplace(query, selectedType);
-      setMarketplacePlugins(results);
-    } catch (err) {
-      console.error('Failed to search marketplace:', err);
-      setMarketplacePlugins([]);
-    } finally {
-      setSearchingMarketplace(false);
-    }
-  };
+  const filteredInstalledPlugins = installedPlugins.filter(p => {
+    const q = installedSearchQuery.toLowerCase();
+    const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
+    const matchesType = selectedType === 'all' || p.type === selectedType;
+    return matchesSearch && matchesType;
+  });
 
-  const filteredPlugins = installedPlugins.filter(p => {
-    const matchesSearch = !searchQuery ||
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.id.toLowerCase().includes(searchQuery.toLowerCase());
-
-    // Map UI filter type to installed plugin type: 'protocol-ui' -> 'protocol', 'auth-ui' -> 'auth'
-    const matchesType = selectedType === 'all' ||
-      (selectedType === 'protocol-ui' && p.type === 'protocol') ||
-      (selectedType === 'auth-ui' && p.type === 'auth');
-
+  const filteredMarketplacePlugins = allMarketplacePlugins.filter(pkg => {
+    const q = marketplaceSearchQuery.toLowerCase();
+    const matchesSearch = !q ||
+      pkg.name?.toLowerCase().includes(q) ||
+      pkg.description?.toLowerCase().includes(q);
+    const matchesType = selectedType === 'all' || pkg.apiquest?.type === selectedType;
     return matchesSearch && matchesType;
   });
 
@@ -153,114 +152,112 @@ export function PluginManager({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b" style={{ borderColor: 'var(--gray-6)' }}>
-        <div className="flex items-center gap-2">
+        <Flex align="center" gap="2">
           <PuzzlePieceIcon className="w-5 h-5" style={{ color: 'var(--accent-9)' }} />
           <Text size="4" weight="medium">Plugin Manager</Text>
-        </div>
-        <Button
-          variant="soft"
-          onClick={() => pluginManagerService.reloadPlugins()}
-        >
-          <ArrowPathIcon className="w-4 h-4" />
-          Reload
+        </Flex>
+        <Button size="1" variant="soft" onClick={() => pluginManagerService.reloadPlugins()}>
+          <ArrowPathIcon className="w-3 h-3" />
+          Reload Plugins
         </Button>
       </div>
 
       {/* Tabs */}
-      <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <Tabs.List>
           <Tabs.Trigger value="installed">
             Installed ({installedPlugins.length})
           </Tabs.Trigger>
           <Tabs.Trigger value="marketplace">
-            Marketplace
+            Marketplace {marketplaceLoaded && allMarketplacePlugins.length > 0 ? `(${allMarketplacePlugins.length})` : ''}
           </Tabs.Trigger>
         </Tabs.List>
 
         {/* Installed Plugins Tab */}
-        <Tabs.Content value="installed">
+        <Tabs.Content value="installed" style={{ flex: 1, overflow: 'auto' }}>
           <div className="p-4">
-            {/* Search & Filter */}
-            <div className="mb-4 flex gap-2">
+            <Flex gap="2" mb="3">
               <Box flexGrow="1">
                 <TextField.Root
+                  size="1"
                   placeholder="Search installed plugins..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={installedSearchQuery}
+                  onChange={(e) => setInstalledSearchQuery(e.target.value)}
                 >
                   <TextField.Slot>
-                    <MagnifyingGlassIcon className="w-4 h-4" />
+                    <MagnifyingGlassIcon className="w-3 h-3" />
                   </TextField.Slot>
                 </TextField.Root>
               </Box>
-              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as any)}>
-                <Tabs.List>
+              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as PluginTypeFilter)}>
+                <Tabs.List size="1">
                   <Tabs.Trigger value="all">All</Tabs.Trigger>
-                  <Tabs.Trigger value="protocol">Protocol</Tabs.Trigger>
-                  <Tabs.Trigger value="auth">Auth</Tabs.Trigger>
+                  <Tabs.Trigger value="protocol-ui">Protocol</Tabs.Trigger>
+                  <Tabs.Trigger value="auth-ui">Auth</Tabs.Trigger>
                 </Tabs.List>
               </Tabs.Root>
-            </div>
+            </Flex>
 
-            {/* Plugins Table */}
-            {filteredPlugins.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <PuzzlePieceIcon className="w-12 h-12 mb-4" style={{ color: 'var(--gray-8)' }} />
-                <Text size="3" color="gray">
-                  {searchQuery ? 'No plugins found' : 'No plugins installed'}
+            {filteredInstalledPlugins.length === 0 ? (
+              <Flex direction="column" align="center" justify="center" py="8" gap="2">
+                <PuzzlePieceIcon className="w-10 h-10" style={{ color: 'var(--gray-7)' }} />
+                <Text size="2" color="gray">
+                  {installedSearchQuery ? 'No plugins match your search' : 'No plugins installed'}
                 </Text>
-                <Text size="2" color="gray" className="mt-2">
-                  {!searchQuery && 'Install plugins from the Marketplace tab'}
-                </Text>
-              </div>
+                {!installedSearchQuery && (
+                  <Text size="1" color="gray">Install plugins from the Marketplace tab</Text>
+                )}
+              </Flex>
             ) : (
-              <Table.Root variant="surface">
+              <Table.Root size="1" variant="surface">
                 <Table.Header>
                   <Table.Row>
                     <Table.ColumnHeaderCell>Plugin</Table.ColumnHeaderCell>
                     <Table.ColumnHeaderCell>Type</Table.ColumnHeaderCell>
                     <Table.ColumnHeaderCell>Version</Table.ColumnHeaderCell>
-                    <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
-                    <Table.ColumnHeaderCell>Actions</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell>Enabled</Table.ColumnHeaderCell>
+                    <Table.ColumnHeaderCell></Table.ColumnHeaderCell>
                   </Table.Row>
                 </Table.Header>
                 <Table.Body>
-                  {filteredPlugins.map((plugin) => (
-                    <Table.Row key={plugin.id}>
-                      <Table.Cell>
-                        <div className="flex flex-col gap-1">
-                          <Text size="2" weight="medium">{plugin.name}</Text>
+                  {filteredInstalledPlugins.map((plugin) => (
+                    <Table.Row key={plugin.id} style={{ verticalAlign: 'middle' }}>
+                      <Table.Cell style={{ verticalAlign: 'middle' }}>
+                        <Flex direction="column" gap="1">
+                          <Text size="1" weight="medium">{plugin.name}</Text>
                           <Text size="1" color="gray">{plugin.id}</Text>
-                        </div>
+                        </Flex>
                       </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={plugin.type === 'protocol' ? 'blue' : 'green'}>
+                      <Table.Cell style={{ verticalAlign: 'middle' }}>
+                        <Badge size="1" color={plugin.type === 'protocol-ui' ? 'blue' : plugin.type === 'auth-ui' ? 'green' : 'gray'}>
                           {plugin.type}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell>
-                        <Text size="2">{plugin.version}</Text>
+                      <Table.Cell style={{ verticalAlign: 'middle' }}>
+                        <Text size="1">{plugin.version}</Text>
                       </Table.Cell>
-                      <Table.Cell>
-                        <div className="flex items-center gap-2">
+                      <Table.Cell style={{ verticalAlign: 'middle' }}>
+                        <Flex align="center" gap="2">
                           <Switch
+                            size="1"
                             checked={plugin.enabled}
                             onCheckedChange={(checked) => handleTogglePlugin(plugin.id, checked)}
                             disabled={plugin.bundled}
                           />
-                          <Text size="2" color={plugin.enabled ? 'green' : 'gray'}>
-                            {plugin.enabled ? 'Enabled' : 'Disabled'}
+                          <Text size="1" color={plugin.enabled ? 'green' : 'gray'}>
+                            {plugin.enabled ? 'On' : 'Off'}
                           </Text>
-                        </div>
+                        </Flex>
                       </Table.Cell>
-                      <Table.Cell>
+                      <Table.Cell style={{ verticalAlign: 'middle' }}>
                         {!plugin.bundled && (
                           <IconButton
-                            variant="soft"
+                            size="1"
+                            variant="ghost"
                             color="red"
                             onClick={() => handleUninstallPlugin(plugin.id)}
                           >
-                            <TrashIcon className="w-4 h-4" />
+                            <TrashIcon className="w-3 h-3" />
                           </IconButton>
                         )}
                       </Table.Cell>
@@ -273,93 +270,148 @@ export function PluginManager({
         </Tabs.Content>
 
         {/* Marketplace Tab */}
-        <Tabs.Content value="marketplace">
+        <Tabs.Content value="marketplace" style={{ flex: 1, overflow: 'auto' }}>
           <div className="p-4">
-            {/* Search & Filter */}
-            <div className="mb-4 flex flex-col gap-2">
-              <Flex gap="2">
-                <Box flexGrow="1">
-                  <TextField.Root
-                    placeholder={`Search @apiquest/${selectedType !== 'all' ? `plugin-${selectedType}-*` : '*'} packages on npmjs...`}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleSearchMarketplace();
-                      }
-                    }}
-                  >
-                    <TextField.Slot>
-                      <MagnifyingGlassIcon className="w-4 h-4" />
-                    </TextField.Slot>
-                  </TextField.Root>
-                </Box>
-                <Button
-                  onClick={handleSearchMarketplace}
-                  loading={searchingMarketplace}
+            <Flex gap="2" mb="3" align="center">
+              <Box flexGrow="1">
+                <TextField.Root
+                  size="1"
+                  placeholder="Filter by name or description..."
+                  value={marketplaceSearchQuery}
+                  onChange={(e) => setMarketplaceSearchQuery(e.target.value)}
                 >
-                  Search
-                </Button>
-              </Flex>
-              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as any)}>
-                <Tabs.List>
-                  <Tabs.Trigger value="all">All Plugins</Tabs.Trigger>
-                  <Tabs.Trigger value="protocol">Protocol Plugins</Tabs.Trigger>
-                  <Tabs.Trigger value="auth">Auth Plugins</Tabs.Trigger>
+                  <TextField.Slot>
+                    <MagnifyingGlassIcon className="w-3 h-3" />
+                  </TextField.Slot>
+                </TextField.Root>
+              </Box>
+              <Button
+                size="1"
+                variant="soft"
+                onClick={loadMarketplace}
+                disabled={loadingMarketplace}
+              >
+                {loadingMarketplace ? <Spinner size="1" /> : <ArrowPathIcon className="w-3 h-3" />}
+                {loadingMarketplace ? 'Loading...' : 'Refresh'}
+              </Button>
+            </Flex>
+
+            <Flex mb="3">
+              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as PluginTypeFilter)}>
+                <Tabs.List size="1">
+                  <Tabs.Trigger value="all">All</Tabs.Trigger>
+                  <Tabs.Trigger value="protocol-ui">Protocol</Tabs.Trigger>
+                  <Tabs.Trigger value="auth-ui">Auth</Tabs.Trigger>
                 </Tabs.List>
               </Tabs.Root>
-            </div>
+            </Flex>
 
-            {/* Marketplace Results */}
-            {marketplacePlugins.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <PuzzlePieceIcon className="w-12 h-12 mb-4" style={{ color: 'var(--gray-8)' }} />
-                <Text size="3" color="gray">
-                  Search for plugins on npmjs
+            {/* Installation error */}
+            {installError && (
+              <Flex
+                align="start"
+                gap="2"
+                mb="3"
+                p="2"
+                style={{
+                  background: 'var(--red-3)',
+                  border: '1px solid var(--red-6)',
+                  borderRadius: '6px'
+                }}
+              >
+                <XCircleIcon style={{ width: '14px', height: '14px', color: 'var(--red-9)', flexShrink: 0, marginTop: '2px' }} />
+                <Box style={{ flex: 1 }}>
+                  <Text size="1" weight="medium" style={{ color: 'var(--red-11)', display: 'block' }}>
+                    Installation failed
+                  </Text>
+                  <Text size="1" style={{ color: 'var(--red-11)' }}>{installError}</Text>
+                </Box>
+                <button
+                  onClick={() => setInstallError(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red-9)', padding: 0, flexShrink: 0 }}
+                  aria-label="Dismiss"
+                >
+                  <XCircleIcon style={{ width: '12px', height: '12px' }} />
+                </button>
+              </Flex>
+            )}
+
+            {/* Results */}
+            {loadingMarketplace ? (
+              <Flex direction="column" align="center" justify="center" py="8" gap="2">
+                <Spinner size="3" />
+                <Text size="2" color="gray">Loading available plugins...</Text>
+              </Flex>
+            ) : filteredMarketplacePlugins.length === 0 ? (
+              <Flex direction="column" align="center" justify="center" py="8" gap="2">
+                <PuzzlePieceIcon className="w-10 h-10" style={{ color: 'var(--gray-7)' }} />
+                <Text size="2" color="gray">
+                  {marketplaceLoaded
+                    ? (marketplaceSearchQuery ? 'No plugins match your filter' : 'No desktop plugins found')
+                    : 'Loading...'}
                 </Text>
-                <Text size="2" color="gray" className="mt-2">
-                  Enter a search query or package name to find plugins
-                </Text>
-              </div>
+                {marketplaceLoaded && !marketplaceSearchQuery && (
+                  <Text size="1" color="gray">Click Refresh to reload from npm</Text>
+                )}
+              </Flex>
             ) : (
-              <div className="grid gap-3">
-                {marketplacePlugins.map((pkg) => {
+              <Flex direction="column" gap="2">
+                {filteredMarketplacePlugins.map((pkg) => {
                   const isInstalled = installedPlugins.some(p => p.id === pkg.name);
+                  const isInstalling = installing === pkg.name;
 
                   return (
-                    <Card key={pkg.name}>
-                      <Flex justify="between" align="center">
-                        <div className="flex flex-col gap-1">
-                          <Text size="3" weight="medium">{pkg.name}</Text>
-                          <Text size="2" color="gray">{pkg.description}</Text>
-                          <div className="flex gap-2 mt-2">
-                            <Badge>{pkg.version}</Badge>
-                            {pkg.apiquest && (
-                              <Badge color="blue">{pkg.apiquest.type}</Badge>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          {isInstalled ? (
-                            <Button disabled>
-                              <CheckCircleIcon className="w-4 h-4" />
-                              Installed
-                            </Button>
-                          ) : (
-                            <Button
-                              onClick={() => handleInstallPlugin(pkg.name)}
-                              loading={installing}
+                    <div
+                      key={pkg.name}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'var(--gray-2)',
+                        border: '1px solid var(--gray-5)',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px'
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Flex align="center" gap="2" mb="1">
+                          <Text size="1" weight="medium">{pkg.name}</Text>
+                          <Badge size="1">{pkg.version}</Badge>
+                          {pkg.apiquest?.type && (
+                            <Badge
+                              size="1"
+                              color={pkg.apiquest.type === 'protocol-ui' ? 'blue' : pkg.apiquest.type === 'auth-ui' ? 'green' : 'gray'}
                             >
-                              <ArrowDownTrayIcon className="w-4 h-4" />
-                              Install
-                            </Button>
+                              {pkg.apiquest.type}
+                            </Badge>
                           )}
-                        </div>
-                      </Flex>
-                    </Card>
+                        </Flex>
+                        {pkg.description && (
+                          <Text size="1" color="gray" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {pkg.description}
+                          </Text>
+                        )}
+                      </div>
+                      {isInstalled ? (
+                        <Button size="1" variant="soft" disabled>
+                          <CheckCircleIcon className="w-3 h-3" />
+                          Installed
+                        </Button>
+                      ) : (
+                        <Button
+                          size="1"
+                          onClick={() => handleInstallPlugin(pkg.name)}
+                          disabled={installing !== null && !isInstalling}
+                        >
+                          {isInstalling ? <Spinner size="1" /> : <ArrowDownTrayIcon className="w-3 h-3" />}
+                          {isInstalling ? 'Installing...' : 'Install'}
+                        </Button>
+                      )}
+                    </div>
                   );
                 })}
-              </div>
+              </Flex>
             )}
           </div>
         </Tabs.Content>

@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-ui-types",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "TypeScript types for ApiQuest plugin UI interfaces",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

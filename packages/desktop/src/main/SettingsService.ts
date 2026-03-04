@@ -12,6 +12,21 @@ export type AppSettings = {
     lastActivePath?: string;
   };
   plugins?: Array<{ name: string; enabled: boolean }>;
+  tools?: {
+    /**
+     * Optional absolute path to an npm CLI binary.
+     * When set, overrides the bundled npm. Useful only in rare environments where
+     * the bundled npm cannot run (e.g., very restrictive app sandboxing).
+     * Leave empty to use the bundled npm (recommended).
+     */
+    npmPath?: string;
+    /**
+     * Optional absolute path to the git binary.
+     * When empty, the app will attempt to find git on the system PATH.
+     * Useful when git is installed in a non-standard location.
+     */
+    gitPath?: string;
+  };
 };
 
 const DEFAULT_SETTINGS: Required<AppSettings> = {
@@ -23,7 +38,11 @@ const DEFAULT_SETTINGS: Required<AppSettings> = {
     externalPaths: [],
     lastActivePath: ''
   },
-  plugins: []
+  plugins: [],
+  tools: {
+    npmPath: '',
+    gitPath: ''
+  }
 };
 
 function deepMerge<T>(base: T, partial: Partial<T>): T {

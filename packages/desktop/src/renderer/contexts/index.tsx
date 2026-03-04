@@ -9,7 +9,7 @@ export { NetworkProvider, useNetwork } from './NetworkContext';
 export { TrashProvider, useTrash } from './TrashContext';
 export { TabProvider, useTabNavigation, useTabStatusState, useTabStatusActions, useTabEditorBridge } from './TabContext';
 export { ScreenModeProvider, useScreenMode } from './ScreenModeContext';
-export type { ScreenMode } from './ScreenModeContext';
+export type { ScreenMode, SettingsTab } from './ScreenModeContext';
 
 // Combined provider for easy app wrapping
 import React, { ReactNode } from 'react';

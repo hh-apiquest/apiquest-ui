@@ -1,16 +1,134 @@
 // Plugins IPC handlers
 import { ipcMain, app } from 'electron';
-import { readdir, readFile, writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { readdir, readFile, mkdir } from 'fs/promises';
+import { join, dirname } from 'path';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
+import { createRequire } from 'module';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
 import { registerPluginProtocol } from '../protocols/plugin-protocol.js';
 import { settingsService } from '../SettingsService.js';
 import { installWorkspacePlugins } from '../DevPluginInstaller.js';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve the path to the bundled npm CLI script.
+ *
+ * When packaged with electron-builder the 'npm' package is included in the app's
+ * node_modules (via the dependencies field in package.json). We use createRequire
+ * to resolve it relative to this module so it works regardless of whether we are
+ * in dev mode or packaged.
+ *
+ * The npm package exposes its CLI entry point at package root + '/bin/npm-cli.js'.
+ */
+function getBundledNpmCli(): string | null {
+  try {
+    // createRequire lets us use CommonJS-style resolution from an ESM context
+    const require = createRequire(import.meta.url);
+    // Resolve the npm package's package.json, then navigate to the CLI script
+    const npmPkg = require.resolve('npm/package.json');
+    return join(dirname(npmPkg), 'bin', 'npm-cli.js');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run an npm command using the bundled npm CLI script executed by Electron's own
+ * Node.js binary (process.execPath). This removes any dependency on a system-installed
+ * npm or Node.js.
+ *
+ * Falls back to system 'npm' if the bundled CLI cannot be found (e.g., in dev mode
+ * before the package is installed).
+ */
+async function runNpm(args: string[], options: { maxBuffer?: number; cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
+  const bundledCli = getBundledNpmCli();
+
+  if (bundledCli) {
+    // Use Electron's Node.js to invoke the bundled npm CLI script
+    return execFileAsync(process.execPath, [bundledCli, ...args], {
+      maxBuffer: options.maxBuffer ?? 1024 * 1024 * 10,
+      cwd: options.cwd,
+      env: {
+        ...process.env,
+        // Prevent npm from trying to update itself
+        NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+        // Use Electron's Node.js path so npm knows which node to use
+        npm_execpath: bundledCli,
+      }
+    });
+  }
+
+  // Fallback: system npm
+  console.warn('[PluginHandler] Bundled npm not found, falling back to system npm');
+  return execAsync(['npm', ...args].join(' '), {
+    maxBuffer: options.maxBuffer ?? 1024 * 1024 * 10,
+    cwd: options.cwd,
+  });
+}
+
+/**
+ * Check whether git is available either at the path configured in settings or the system PATH.
+ * Returns the version string on success, or null if not found.
+ */
+async function checkGitAvailable(): Promise<string | null> {
+  // Read custom git path from settings (if configured)
+  let gitBin = 'git';
+  try {
+    const settings = await settingsService.getAll();
+    if (settings.tools?.gitPath?.trim()) {
+      gitBin = settings.tools.gitPath.trim();
+    }
+  } catch {
+    // Settings unavailable - fall back to PATH lookup
+  }
+
+  try {
+    const { stdout } = await execAsync(`"${gitBin}" --version`);
+    return stdout.trim().split('\n')[0] || 'unknown';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check bundled npm and system git availability, caching results after first probe.
+ */
+let cachedNpmVersion: string | null | undefined;
+let cachedGitVersion: string | null | undefined;
+
+async function ensureToolsAvailable(): Promise<{ npm: string | null; git: string | null }> {
+  if (cachedNpmVersion === undefined) {
+    const cli = getBundledNpmCli();
+    if (cli) {
+      try {
+        const { stdout } = await execFileAsync(process.execPath, [cli, '--version'], { env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: 'false' } });
+        cachedNpmVersion = `npm/${stdout.trim()} (bundled)`;
+      } catch {
+        cachedNpmVersion = null;
+      }
+    } else {
+      // Try system npm as last resort
+      try {
+        const { stdout } = await execAsync('npm --version');
+        cachedNpmVersion = `npm/${stdout.trim()} (system)`;
+      } catch {
+        cachedNpmVersion = null;
+      }
+    }
+    console.log(`[PluginHandler] npm: ${cachedNpmVersion ?? 'NOT FOUND'}`);
+  }
+
+  if (cachedGitVersion === undefined) {
+    cachedGitVersion = await checkGitAvailable();
+    console.log(`[PluginHandler] git: ${cachedGitVersion ?? 'NOT FOUND'}`);
+  }
+
+  return { npm: cachedNpmVersion, git: cachedGitVersion };
+}
 
 export interface ScannedPlugin {
   name: string;
@@ -25,6 +143,17 @@ export function registerPluginsHandlers() {
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
   registerPluginProtocol(pluginsDir);
   
+  /**
+   * Check whether required system tools (npm, git) are available.
+   * Returns an object with the version strings or null for each tool.
+   */
+  ipcMain.handle('plugins:checkTools', async (): Promise<{ npm: string | null; git: string | null }> => {
+    // Reset cache so the check is always fresh when explicitly requested
+    cachedNpmVersion = undefined;
+    cachedGitVersion = undefined;
+    return ensureToolsAvailable();
+  });
+
   /**
    * Ensure dev plugins are installed (in dev mode)
    * This must be called before scanning/loading plugins
@@ -93,19 +222,28 @@ export function registerPluginsHandlers() {
   });
 
   /**
-   * Install plugin from npm registry
+   * Install plugin from npm registry.
+   * Returns { success: true } or { success: false, error: string }.
    */
-  ipcMain.handle('plugins:install', async (_event, packageName: string): Promise<boolean> => {
+  ipcMain.handle('plugins:install', async (_event, packageName: string): Promise<{ success: boolean; error?: string }> => {
+    // Ensure npm is resolvable (bundled or system fallback)
+    const tools = await ensureToolsAvailable();
+    if (!tools.npm) {
+      const msg = 'npm is not available. The bundled npm could not be loaded. Please reinstall ApiQuest or contact support.';
+      console.error('[PluginHandler]', msg);
+      return { success: false, error: msg };
+    }
+
     try {
       console.log('[PluginHandler] Installing plugin:', packageName);
       
       // Ensure plugins directory exists
       await mkdir(pluginsDir, { recursive: true });
       
-      // Use npm to install the package
-      const { stdout, stderr } = await execAsync(
-        `npm install ${packageName} --prefix "${pluginsDir}" --no-save --legacy-peer-deps`,
-        { maxBuffer: 1024 * 1024 * 10 } // 10MB buffer
+      // Use bundled npm (via Electron's Node.js) to install the package
+      const { stdout, stderr } = await runNpm(
+        ['install', packageName, '--prefix', pluginsDir, '--no-save', '--legacy-peer-deps'],
+        { maxBuffer: 1024 * 1024 * 10 }
       );
       
       if (stderr && !stderr.includes('npm WARN')) {
@@ -128,8 +266,7 @@ export function registerPluginsHandlers() {
         const destPath = join(pluginsDir, shortName);
         
         // Use npm to copy (instead of move to preserve node_modules)
-        const { copyFileSync, cpSync, existsSync, rmSync } = await import('fs');
-        const { join: pathJoin } = await import('path');
+        const { cpSync, existsSync, rmSync } = await import('fs');
         
         // Remove destination if exists
         if (existsSync(destPath)) {
@@ -138,41 +275,75 @@ export function registerPluginsHandlers() {
         
         // Copy plugin files
         cpSync(sourcePath, destPath, { recursive: true });
-        
+
         console.log('[PluginHandler] Plugin copied to:', destPath);
-        return true;
-      } catch (verifyErr) {
+
+        // Enable plugin in settings (marks it as explicitly enabled so dev installer includes it)
+        try {
+          const settings = await settingsService.getAll();
+          const plugins = Array.isArray(settings.plugins) ? settings.plugins : [];
+          const existing = plugins.find(p => p.name === packageName);
+          if (existing) {
+            existing.enabled = true;
+          } else {
+            plugins.push({ name: packageName, enabled: true });
+          }
+          await settingsService.update({ plugins });
+          console.log('[PluginHandler] Plugin enabled in settings:', packageName);
+        } catch (settingsErr: any) {
+          console.warn('[PluginHandler] Could not update settings after install:', settingsErr.message || settingsErr);
+        }
+
+        return { success: true };
+      } catch (verifyErr: any) {
         console.error('[PluginHandler] Plugin verification failed:', verifyErr);
-        return false;
+        return { success: false, error: verifyErr?.message || 'Plugin verification failed after installation.' };
       }
     } catch (err: any) {
       console.error('[PluginHandler] Failed to install plugin:', err.message || err);
-      return false;
+      return { success: false, error: err?.message || 'Installation failed.' };
     }
   });
 
   /**
-   * Remove/uninstall plugin
+   * Remove/uninstall plugin.
+   * Also disables the plugin in settings so dev-mode reinstallation does not restore it.
    */
   ipcMain.handle('plugins:remove', async (_event, pluginName: string): Promise<boolean> => {
     try {
       console.log('[PluginHandler] Removing plugin:', pluginName);
-      
-      // Extract short name from package name
+
+      // Extract short name from package name e.g. @apiquest/plugin-http-ui -> plugin-http-ui
       const packageNameParts = pluginName.split('/');
       const shortName = packageNameParts[packageNameParts.length - 1];
       const pluginPath = join(pluginsDir, shortName);
-      
+
       const { existsSync, rmSync } = await import('fs');
-      
+
       if (existsSync(pluginPath)) {
         rmSync(pluginPath, { recursive: true, force: true });
-        console.log('[PluginHandler] Plugin removed:', pluginName);
-        return true;
+        console.log('[PluginHandler] Plugin files removed:', pluginPath);
       } else {
-        console.warn('[PluginHandler] Plugin not found:', pluginPath);
-        return false;
+        console.warn('[PluginHandler] Plugin folder not found:', pluginPath);
       }
+
+      // Persist as disabled in settings so dev-mode reinstaller skips it
+      try {
+        const settings = await settingsService.getAll();
+        const plugins = Array.isArray(settings.plugins) ? settings.plugins : [];
+        const existing = plugins.find(p => p.name === pluginName);
+        if (existing) {
+          existing.enabled = false;
+        } else {
+          plugins.push({ name: pluginName, enabled: false });
+        }
+        await settingsService.update({ plugins });
+        console.log('[PluginHandler] Plugin marked as disabled in settings:', pluginName);
+      } catch (settingsErr: any) {
+        console.error('[PluginHandler] Failed to update settings after remove:', settingsErr.message || settingsErr);
+      }
+
+      return true;
     } catch (err: any) {
       console.error('[PluginHandler] Failed to remove plugin:', err.message || err);
       return false;
@@ -180,72 +351,100 @@ export function registerPluginsHandlers() {
   });
   
   /**
-   * Search npmjs marketplace for @apiquest/* plugins
+   * Search npmjs marketplace for @apiquest/* desktop plugins.
+   * Uses the bundled npm CLI for search (finds all packages including newly published ones)
+   * then fetches full metadata via npm view to get the apiquest field.
    */
   ipcMain.handle('plugins:searchMarketplace', async (
     _event,
     query: string,
     type?: ApiquestMetadata['type'] | 'all'
   ): Promise<any[]> => {
+    // Ensure bundled npm is available
+    const tools = await ensureToolsAvailable();
+    if (!tools.npm) {
+      console.warn('[PluginHandler] Marketplace search skipped: npm not available.');
+      return [];
+    }
+
     try {
-      console.log('[PluginHandler] Searching marketplace:', query, type);
-      
-      // Build search query - always search @apiquest/* scope
-      const searchQuery = query ? `@apiquest/${query}` : '@apiquest/plugin';
-      
-      // Use npm search API to get package names
-      const { stdout } = await execAsync(
-        `npm search ${searchQuery} --json`,
-        { maxBuffer: 1024 * 1024 * 10 } // 10MB buffer
-      );
-      
-      const searchResults = JSON.parse(stdout);
-      
-      // Fetch full package.json for each result to get apiquest metadata
+      // Build search query: '@apiquest' finds all packages in the @apiquest scope
+      // including newly published ones not yet indexed by the registry REST search API.
+      // Using the scope prefix is more precise than 'apiquest' alone.
+      const searchArgs = query
+        ? ['search', `@apiquest ${query}`, '--json']
+        : ['search', '@apiquest', '--json'];
+      console.log('[PluginHandler] npm search:', searchArgs.join(' '));
+
+      const { stdout } = await runNpm(searchArgs, { maxBuffer: 1024 * 1024 * 10 });
+
+      let searchResults: any[];
+      try {
+        searchResults = JSON.parse(stdout);
+      } catch {
+        console.error('[PluginHandler] Failed to parse npm search output');
+        return [];
+      }
+
+      // Filter to @apiquest/plugin-* packages only
+      const pluginNames: string[] = searchResults
+        .map((r: any) => r.name as string)
+        .filter((name: string) => typeof name === 'string' && name.startsWith('@apiquest/plugin-'));
+
+      console.log(`[PluginHandler] Found ${pluginNames.length} @apiquest/plugin-* packages: ${pluginNames.join(', ')}`);
+
+      if (pluginNames.length === 0) return [];
+
+      // Fetch full metadata for each found package using npm view
       const plugins: any[] = [];
-      
-      for (const pkg of searchResults) {
-        if (!pkg.name.startsWith('@apiquest/')) continue;
-        
+
+      await Promise.all(pluginNames.map(async (name: string) => {
         try {
-          // Fetch full package.json from npm registry
-          const { stdout: pkgJson } = await execAsync(
-            `npm view ${pkg.name} --json`,
-            { maxBuffer: 1024 * 1024* 2 } // 2MB buffer
+          console.log(`[PluginHandler]   npm view ${name}`);
+          const { stdout: viewOut } = await runNpm(
+            ['view', name, '--json'],
+            { maxBuffer: 1024 * 1024 * 2 }
           );
-          
-          const pkgData = JSON.parse(pkgJson);
+
+          const pkgData = JSON.parse(viewOut);
           const metadata: ApiquestMetadata | undefined = pkgData.apiquest;
-          
-          // Skip if no apiquest metadata
-          if (!metadata) continue;
-          
-          // Only show desktop plugins
-          if (!metadata.runtime?.includes('desktop')) {
-            continue;
+
+          if (!metadata) {
+            console.log(`[PluginHandler]   ${name}: no apiquest metadata - skipping`);
+            return;
           }
-          
+
+          // Only show desktop runtime plugins
+          const runtime = metadata.runtime;
+          const isDesktop = Array.isArray(runtime) ? runtime.includes('desktop') : runtime === 'desktop';
+          if (!isDesktop) {
+            console.log(`[PluginHandler]   ${name}@${pkgData.version}: runtime=${JSON.stringify(runtime)} - not desktop, skipping`);
+            return;
+          }
+
           // Filter by type if specified
           if (type && type !== 'all' && metadata.type !== type) {
-            continue;
+            console.log(`[PluginHandler]   ${name}@${pkgData.version}: type=${metadata.type} - filtered out (wanted ${type})`);
+            return;
           }
-          
+
+          console.log(`[PluginHandler]   ${name}@${pkgData.version}: accepted (type=${metadata.type})`);
           plugins.push({
             name: pkgData.name,
             version: pkgData.version,
             description: pkgData.description,
             apiquest: metadata,
-            author: pkgData.author?.name || pkg.publisher?.username,
-            repository: pkgData.repository?.url || pkg.links?.repository,
-            homepage: pkgData.homepage || pkg.links?.homepage,
+            author: typeof pkgData.author === 'string' ? pkgData.author : pkgData.author?.name,
+            repository: typeof pkgData.repository === 'string' ? pkgData.repository : pkgData.repository?.url,
+            homepage: pkgData.homepage,
           });
-        } catch (viewErr) {
-          console.error(`[PluginHandler] Failed to fetch metadata for ${pkg.name}:`, viewErr);
-          continue;
+        } catch (viewErr: any) {
+          console.error(`[PluginHandler]   Failed to fetch metadata for ${name}:`, viewErr.message || viewErr);
         }
-      }
-      
-      console.log(`[PluginHandler] Found ${plugins.length} plugins with metadata`);
+      }));
+
+      plugins.sort((a, b) => a.name.localeCompare(b.name));
+      console.log(`[PluginHandler] Marketplace search complete: ${plugins.length} desktop plugins returned`);
       return plugins;
     } catch (err: any) {
       console.error('[PluginHandler] Marketplace search failed:', err.message || err);

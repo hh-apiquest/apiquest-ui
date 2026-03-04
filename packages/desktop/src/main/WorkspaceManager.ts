@@ -76,39 +76,6 @@ export class WorkspaceManager {
       'utf-8'
     );
 
-    // Create example collection
-    const exampleCollection = {
-      info: {
-        name: 'Example Collection',
-        description: 'A sample collection to get you started',
-        schema: 'https://apiquest.dev/schema/v1.0.0'
-      },
-      items: [
-        {
-          id: 'example-request',
-          name: 'Example GET Request',
-          protocol: 'http',
-          request: {
-            method: 'GET',
-            url: 'https://jsonplaceholder.typicode.com/users/1',
-            headers: {}
-          },
-          tests: [
-            {
-              name: 'Status is 200',
-              script: 'quest.test(\'Status is 200\', () => { quest.expect(quest.response.status.code).to.equal(200); });'
-            }
-          ]
-        }
-      ]
-    };
-
-    await fs.writeFile(
-      path.join(workspacePath, 'collections', 'Example.apiquest.json'),
-      JSON.stringify(exampleCollection, null, 2),
-      'utf-8'
-    );
-
     // Create example environments
     const devEnv = {
       name: 'Development',
@@ -167,9 +134,9 @@ This is an ApiQuest workspace.
 
 ## Getting Started
 
-1. Open this folder in ApiQuest Desktop
-2. Explore the Example Collection
-3. Create new requests or import from Postman/Bruno
+1. Add this folder in ApiQuest Desktop
+2. Install plugins from Settings > Plugins to get started
+3. Create new collections and requests, or import from supported formats
 `;
 
     await fs.writeFile(

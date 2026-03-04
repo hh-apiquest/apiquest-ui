@@ -1,7 +1,16 @@
 {
   "name": "@apiquest/plugin-sse-ui",
-  "version": "1.0.8",
-  "description": "SSE Protocol UI Plugin for ApiQuest Desktop",
+  "version": "1.0.9",
+  "description": "SSE (Server-Sent Events) Protocol UI Plugin for ApiQuest Desktop",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "apiquest",
+    "plugin",
+    "sse",
+    "server-sent-events",
+    "desktop",
+    "ui"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
