@@ -43,7 +43,7 @@
     }
   },
   "dependencies": {
-    "@apiquest/plugin-http": "^1.0.8"
+    "@apiquest/plugin-http": "^1.0.9"
   },
   "peerDependencies": {
     "@heroicons/react": "^2",

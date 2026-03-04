@@ -45,11 +45,11 @@
     }
   },
   "dependencies": {
-    "@apiquest/plugin-auth": "^1.0.0"
+    "@apiquest/plugin-auth": "^1.0.9"
   },
   "peerDependencies": {
     "@apiquest/plugin-ui-types": "workspace:*",
-    "@apiquest/types": "^1.0.0",
+    "@apiquest/types": "^1.0.9",
     "@heroicons/react": "^2",
     "@radix-ui/colors": "^3",
     "@radix-ui/themes": "^3",
@@ -58,7 +58,7 @@
   },
   "devDependencies": {
     "@apiquest/plugin-ui-types": "workspace:*",
-    "@apiquest/types": "^1.0.0",
+    "@apiquest/types": "^1.0.9",
     "@types/react": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.3.0",
