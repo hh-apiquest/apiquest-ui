@@ -33,6 +33,12 @@ function AppContent() {
     if (!pluginsLoaded) {
       const handlePluginsLoaded = () => setPluginsLoaded(true);
       pluginManagerService.on('pluginsLoaded', handlePluginsLoaded);
+
+      // Avoid missing the event if plugins finished loading before this listener attached.
+      if (pluginManagerService.arePluginsLoaded()) {
+        setPluginsLoaded(true);
+      }
+
       return () => {
         pluginManagerService.off('pluginsLoaded', handlePluginsLoaded);
       };

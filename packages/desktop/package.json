@@ -15,12 +15,12 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron dist/main/index.js",
-    "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:all": "npm run build && electron-builder -mwl"
+    "package": "npm run build && electron-builder --config ./.electron-builder.generated.yml --dir",
+    "dist": "npm run build && electron-builder --config ./.electron-builder.generated.yml",
+    "dist:win": "npm run build && electron-builder --config ./.electron-builder.generated.yml --win",
+    "dist:mac": "npm run build && electron-builder --config ./.electron-builder.generated.yml --mac",
+    "dist:linux": "npm run build && electron-builder --config ./.electron-builder.generated.yml --linux",
+    "dist:all": "npm run build && electron-builder --config ./.electron-builder.generated.yml -mwl"
   },
   "dependencies": {
     "@apiquest/fracture": "^1.0.7",

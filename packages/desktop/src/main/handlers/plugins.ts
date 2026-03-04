@@ -48,17 +48,24 @@ async function runNpm(args: string[], options: { maxBuffer?: number; cwd?: strin
   const bundledCli = getBundledNpmCli();
 
   if (bundledCli) {
+    const npmEnv = {
+      ...process.env,
+      // Run Electron executable as a Node.js process, not as a desktop app.
+      ELECTRON_RUN_AS_NODE: '1',
+      // Packaged Electron rejects many NODE_OPTIONS values and can fail/noise.
+      NODE_OPTIONS: '',
+      // Prevent npm from trying to update itself.
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+      // Let npm know which CLI script is being executed.
+      npm_execpath: bundledCli,
+    };
+
     // Use Electron's Node.js to invoke the bundled npm CLI script
     return execFileAsync(process.execPath, [bundledCli, ...args], {
       maxBuffer: options.maxBuffer ?? 1024 * 1024 * 10,
       cwd: options.cwd,
-      env: {
-        ...process.env,
-        // Prevent npm from trying to update itself
-        NPM_CONFIG_UPDATE_NOTIFIER: 'false',
-        // Use Electron's Node.js path so npm knows which node to use
-        npm_execpath: bundledCli,
-      }
+      windowsHide: true,
+      env: npmEnv,
     });
   }
 
@@ -105,7 +112,16 @@ async function ensureToolsAvailable(): Promise<{ npm: string | null; git: string
     const cli = getBundledNpmCli();
     if (cli) {
       try {
-        const { stdout } = await execFileAsync(process.execPath, [cli, '--version'], { env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: 'false' } });
+        const { stdout } = await execFileAsync(process.execPath, [cli, '--version'], {
+          windowsHide: true,
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+            NODE_OPTIONS: '',
+            NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+            npm_execpath: cli,
+          }
+        });
         cachedNpmVersion = `npm/${stdout.trim()} (bundled)`;
       } catch {
         cachedNpmVersion = null;

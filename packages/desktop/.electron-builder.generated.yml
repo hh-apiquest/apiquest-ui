@@ -1,0 +1,110 @@
+appId: com.apiquest.desktop
+productName: ApiQuest
+copyright: Copyright © 2026 HumanHub LLC
+electronVersion: "40.1.0"
+
+# Directories
+directories:
+  output: dist-installer
+  buildResources: .build-assets/resources
+
+# Files to include from the compiled output
+files:
+  - out/**/*
+  - package.json
+
+# Native node modules extracted from asar
+asarUnpack:
+  - "**/*.node"
+
+# Windows configuration
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  icon: .build-assets/resources/icon.ico
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: ApiQuest
+
+# macOS configuration
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.developer-tools
+  icon: .build-assets/resources/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: .build-assets/resources/entitlements.mac.plist
+  entitlementsInherit: .build-assets/resources/entitlements.mac.plist
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  identity: null
+
+dmg:
+  sign: false
+  contents:
+    - x: 410
+      y: 150
+      type: link
+      path: /Applications
+    - x: 130
+      y: 150
+      type: file
+
+# Linux configuration
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+  category: Development
+  icon: .build-assets/resources/icons
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  synopsis: API Testing and Development Tool
+  description: A powerful API testing tool for developers
+  maintainer: HumanHub LLC <support@apiquest.net>
+  vendor: HumanHub LLC
+
+appImage:
+  license: ../../LICENSE
+
+deb:
+  depends:
+    - gconf2
+    - gconf-service
+    - libnotify4
+    - libappindicator1
+    - libxtst6
+    - libnss3
+
+publish: null
+compression: normal
