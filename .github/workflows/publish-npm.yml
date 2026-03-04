@@ -1,0 +1,98 @@
+name: Publish to NPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    name: Build, Test, and Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'yarn'
+          cache-dependency-path: apiquest-ui/yarn.lock
+
+      - name: Install dependencies
+        working-directory: apiquest-ui
+        run: yarn install --immutable
+
+      - name: Build all packages
+        working-directory: apiquest-ui
+        run: yarn build
+
+      - name: Run linter
+        working-directory: apiquest-ui
+        run: yarn lint
+
+      - name: Type check
+        working-directory: apiquest-ui
+        run: yarn typecheck
+
+  publish:
+    name: Publish Packages
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'yarn'
+          cache-dependency-path: apiquest-ui/yarn.lock
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm to latest
+        run: npm install -g npm@latest
+
+      - name: Verify npm version
+        run: npm --version
+
+      - name: Install dependencies
+        working-directory: apiquest-ui
+        run: yarn install --immutable
+
+      - name: Build all packages
+        working-directory: apiquest-ui
+        run: yarn build
+
+      - name: Publish @apiquest/plugin-ui-types
+        working-directory: apiquest-ui/packages/plugin-ui-types
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @apiquest/plugin-http-ui
+        working-directory: apiquest-ui/packages/plugin-http-ui
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @apiquest/plugin-auth-ui
+        working-directory: apiquest-ui/packages/plugin-auth-ui
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @apiquest/plugin-sse-ui
+        working-directory: apiquest-ui/packages/plugin-sse-ui
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
