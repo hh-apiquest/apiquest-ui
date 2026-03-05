@@ -17,9 +17,9 @@
     "start": "electron dist/main/index.js"
   },
   "dependencies": {
-    "@apiquest/types": "^1.1.0",
     "@apiquest/fracture": "^1.1.0",
     "@apiquest/plugin-ui-types": "workspace:*",
+    "@apiquest/types": "^1.1.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
