@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-ui-types",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "TypeScript types for ApiQuest plugin UI interfaces",
   "license": "AGPL-3.0-or-later",
   "main": "dist/index.js",
@@ -17,13 +17,13 @@
   ],
   "author": "ApiQuest Contributors",
   "dependencies": {
-    "@apiquest/types": "^1.0.9"
+    "@apiquest/types": "^1.1.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
-    "@apiquest/types": "*",
+    "@apiquest/types": "^1.1.0",
     "react": "^18.0.0"
   }
 }

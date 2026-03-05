@@ -231,6 +231,63 @@ export interface UITabProps {
 }
 
 /**
+ * Identifies which kind of editor owns a script.
+ * - request: the Request editor's scripts tab
+ * - folder: the Folder editor's scripts tab
+ * - collection: the Collection editor's scripts tab
+ */
+export type ScriptOwnerType = 'request' | 'folder' | 'collection';
+
+/**
+ * Identifies the execution phase of a script within an owner.
+ * - pre-request: runs before the request is executed
+ * - post-request: runs after the request returns a response
+ * - folder-pre: runs before the folder iteration begins
+ * - folder-post: runs after the folder iteration ends
+ * - collection-pre: runs before the collection run begins
+ * - collection-post: runs after the collection run ends
+ * - plugin-event: runs when a named protocol event fires (e.g. onMessage)
+ */
+export type ScriptPhase =
+  | 'pre-request'
+  | 'post-request'
+  | 'folder-pre'
+  | 'folder-post'
+  | 'collection-pre'
+  | 'collection-post'
+  | 'plugin-event';
+
+/**
+ * The full context describing which script editor is currently active.
+ * Passed to IProtocolPluginUI.getScriptIntellisense() so the plugin
+ * can return the right declarations for the phase.
+ *
+ * - protocol: the active request protocol (e.g. 'http', 'sse')
+ * - ownerType: which kind of editor is showing the script
+ * - phase: which execution phase the user is editing
+ * - eventName: present only when phase === 'plugin-event'
+ */
+export interface ScriptIntellisenseContext {
+  protocol: string;
+  ownerType: ScriptOwnerType;
+  phase: ScriptPhase;
+  eventName?: string;
+}
+
+/**
+ * A single Monaco IntelliSense declaration contribution.
+ * Each entry is registered via monaco.languages.typescript.javascriptDefaults.addExtraLib().
+ *
+ * - content: raw .d.ts text (typically imported from a compiled declaration file via Vite ?raw)
+ * - uri: a unique virtual URI for this lib, e.g. 'ts:quest-http-request.d.ts'
+ *   Monaco uses the URI to detect duplicate registrations and for error messages.
+ */
+export interface ScriptIntellisense {
+  content: string;
+  uri: string;
+}
+
+/**
  * Protocol Plugin UI (Desktop-specific)
  * Provides UI for editing protocol-specific requests
  */
@@ -309,6 +366,15 @@ export interface IProtocolPluginUI {
     warnings?: string[];
   };
 
+  /**
+   * Provide Monaco IntelliSense declarations for script editors.
+   * Called by the desktop ScriptIntellisenseManager when the active script
+   * editor context changes to this protocol. Return an empty array to opt out.
+   *
+   * Each contribution is a raw .d.ts string registered via addExtraLib().
+   * Contributions are scoped to the active context: protocol + ownerType + phase.
+   */
+  getScriptIntellisense?(context: ScriptIntellisenseContext): ScriptIntellisense[];
 }
 
 /**

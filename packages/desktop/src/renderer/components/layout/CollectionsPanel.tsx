@@ -17,7 +17,7 @@ import {
   Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import { pluginManagerService, pluginLoader } from '../../services';
-import type { Variable } from '@apiquest/types';
+import type { VariableValue } from '@apiquest/types';
 import { VariableEditorDialog } from '../variables/VariableEditor';
 import { InputDialog } from '../shared/InputDialog';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
@@ -195,7 +195,7 @@ function CollectionItem({
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [showAddFolder, setShowAddFolder] = useState(false);
   const [showCollectionVars, setShowCollectionVars] = useState(false);
-  const [collectionVariables, setCollectionVariables] = useState<Record<string, string | Variable>>({});
+  const [collectionVariables, setCollectionVariables] = useState<Record<string, VariableValue>>({});
   const [rightClickMenuOpen, setRightClickMenuOpen] = useState(false);
   const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
   const [duplicatingCollection, setDuplicatingCollection] = useState(false);
@@ -249,7 +249,7 @@ function CollectionItem({
       .catch(err => console.error('Failed to load collection:', err));
   }, [collection.id, collection, getCollection]);
 
-  const handleSaveCollectionVars = async (updatedVariables: Record<string, string | Variable>) => {
+  const handleSaveCollectionVars = async (updatedVariables: Record<string, VariableValue>) => {
     if (!workspace || !collectionData) return;
     
     try {
@@ -760,7 +760,7 @@ function CollectionRequestItem({
             <ChevronRightIcon style={{ width: '12px', height: '12px', color: 'var(--gray-9)' }} />
           )}
         </button>
-        <FolderIcon className="w-4 h-4" style={{ color: 'var(--gray-10)' }} />          
+        <FolderIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />          
         
         {activeRenameId === renameId ? (
           <TextField.Root

@@ -1,6 +1,6 @@
 import type { Workspace } from './workspace';
 import type { Collection } from './request';
-import type { Variable } from './environment';
+import type { VariableValue } from '@apiquest/types';
 import type { ScannedPlugin } from '../../main/handlers/plugins.js';
 import type { AppSettings } from '../../main/SettingsService.js';
 import type { ExecutionEvent, RunRequestParams, RunRequestResult } from '../../types/execution.js';
@@ -181,8 +181,8 @@ declare global {
 
       // Global variables operations
       globalVariables: {
-        load: () => Promise<Record<string, Variable>>;
-        save: (variables: Record<string, Variable>) => Promise<void>;
+        load: () => Promise<Record<string, VariableValue>>;
+        save: (variables: Record<string, VariableValue>) => Promise<void>;
       };
 
       // Settings

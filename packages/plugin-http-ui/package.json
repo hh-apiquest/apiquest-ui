@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-http-ui",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "HTTP Protocol UI Plugin for ApiQuest Desktop",
   "license": "AGPL-3.0-or-later",
   "keywords": [
@@ -43,7 +43,7 @@
     }
   },
   "dependencies": {
-    "@apiquest/plugin-http": "^1.0.9"
+    "@apiquest/plugin-http": "^1.1.0"
   },
   "peerDependencies": {
     "@heroicons/react": "^2",
@@ -53,8 +53,8 @@
     "react-dom": "^18"
   },
   "devDependencies": {
+    "@apiquest/types": "^1.1.0",
     "@apiquest/plugin-ui-types": "workspace:*",
-    "@apiquest/types": "^1.0.0",
     "@types/react": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.3.0",

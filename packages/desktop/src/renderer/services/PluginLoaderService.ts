@@ -2,8 +2,9 @@ import React from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import BlackboardTheme from '../themes/Blackboard.json';
 import * as RadixThemes from '@radix-ui/themes';
-import type { PluginUIContext, VariableResolverService } from '@apiquest/plugin-ui-types';
+import type { PluginUIContext, VariableResolverService, ScriptIntellisenseContext, ScriptIntellisense } from '@apiquest/plugin-ui-types';
 import { pluginManagerService } from './PluginManagerService';
+import { ScriptIntellisenseManager } from './ScriptIntellisenseManager';
 
 // Import reusable editors
 import {
@@ -34,13 +35,15 @@ class PluginLoaderService {
   private uiContext: PluginUIContext | null = null;
   private currentTheme: 'light' | 'dark' = 'light';
   private isBlackboardThemeLoaded = false;
+  private intellisenseManager = new ScriptIntellisenseManager();
+  private currentContext: ScriptIntellisenseContext | null = null;
   
   constructor() {
     this.loadMonacoThemes();
   }
   
   /**
-   * Load custom Monaco themes
+   * Load custom Monaco themes and initialize IntelliSense base libs
    */
   private async loadMonacoThemes() {
     try {
@@ -51,6 +54,11 @@ class PluginLoaderService {
     } catch (error) {
       console.error('[PluginLoader] Failed to load Monaco themes:', error);
     }
+
+    // Initialize IntelliSense manager after Monaco is ready
+    this.intellisenseManager.initialize().catch((error) => {
+      console.error('[PluginLoader] IntelliSense manager failed to initialize:', error);
+    });
   }
   
   /**
@@ -157,6 +165,15 @@ class PluginLoaderService {
         console.log(`[PluginLoader] Auto-setup auth plugin: ${plugin.type}`);
       }
     });
+
+    // After a full plugin reload, re-apply the current IntelliSense context so
+    // contributions from newly loaded plugins take effect immediately.
+    pluginManagerService.on('pluginsReloaded', () => {
+      if (this.currentContext !== null) {
+        console.log('[PluginLoader] Plugins reloaded — refreshing IntelliSense context');
+        this.setActiveScriptIntellisenseContext(this.currentContext);
+      }
+    });
   }
   
   /**
@@ -169,6 +186,45 @@ class PluginLoaderService {
     return this.uiContext;
   }
   
+  /**
+   * Set the active script editor context and apply protocol-specific IntelliSense.
+   * Called by script tab editors when the user switches script type or protocol.
+   */
+  setActiveScriptIntellisenseContext(context: ScriptIntellisenseContext): void {
+    this.currentContext = context;
+
+    // Get the protocol plugin UI for the active protocol
+    const protocolPlugin = pluginManagerService.getProtocolPlugin(context.protocol);
+    const contributions: ScriptIntellisense[] = [];
+    let canEventHaveTests = false;
+    let protocolHasTestableEvents = false;
+
+    if (protocolPlugin !== null && protocolPlugin !== undefined) {
+      try {
+        const pluginContributions = protocolPlugin.getScriptIntellisense?.(context) ?? [];
+        contributions.push(...pluginContributions);
+
+        const pluginEvents = (protocolPlugin as any).events as Array<{ name: string; canHaveTests?: boolean }> | undefined;
+        protocolHasTestableEvents = Array.isArray(pluginEvents)
+          ? pluginEvents.some((eventDef) => eventDef?.canHaveTests === true)
+          : false;
+
+        if (context.phase === 'plugin-event' && context.eventName !== undefined) {
+          canEventHaveTests = Array.isArray(pluginEvents)
+            ? pluginEvents.some((eventDef) => eventDef?.name === context.eventName && eventDef?.canHaveTests === true)
+            : false;
+        }
+      } catch (error) {
+        console.error(`[PluginLoader] Failed to get IntelliSense contributions from protocol ${context.protocol}:`, error);
+      }
+    }
+
+    this.intellisenseManager.setContext(context, contributions, {
+      canEventHaveTests,
+      protocolHasTestableEvents,
+    });
+  }
+
   /**
    * Update theme - just update the existing context, don't reinitialize
    */

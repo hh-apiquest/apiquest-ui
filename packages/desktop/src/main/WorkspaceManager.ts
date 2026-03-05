@@ -76,34 +76,7 @@ export class WorkspaceManager {
       'utf-8'
     );
 
-    // Create example environments
-    const devEnv = {
-      name: 'Development',
-      values: [
-        { key: 'baseUrl', value: 'http://localhost:3000', enabled: true },
-        { key: 'apiKey', value: 'dev-key-123', enabled: true }
-      ]
-    };
-
-    const prodEnv = {
-      name: 'Production',
-      values: [
-        { key: 'baseUrl', value: 'https://api.example.com', enabled: true },
-        { key: 'apiKey', value: '', enabled: true }
-      ]
-    };
-
-    await fs.writeFile(
-      path.join(workspacePath, 'environments', 'Development.json'),
-      JSON.stringify(devEnv, null, 2),
-      'utf-8'
-    );
-
-    await fs.writeFile(
-      path.join(workspacePath, 'environments', 'Production.json'),
-      JSON.stringify(prodEnv, null, 2),
-      'utf-8'
-    );
+    // No default environments are created.
 
     // Create .gitignore
     const gitignore = `# ApiQuest Workspace

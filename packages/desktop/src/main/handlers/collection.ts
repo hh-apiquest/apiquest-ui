@@ -4,6 +4,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { workspaceRegistry, collectionRegistry } from './workspace.js';
+import { secretVariableService } from '../SecretVariableService.js';
+import { maskSecretRecord, maskVariablesForLog } from '../utils/mask.js';
 
 // Helper function to get collection file path
 function getCollectionPath(workspaceId: string, collectionId: string): string {
@@ -21,13 +23,41 @@ export function registerCollectionHandlers() {
   ipcMain.handle('workspace:loadCollection', async (_event, workspaceId: string, collectionId: string) => {
     const collectionPath = getCollectionPath(workspaceId, collectionId);
     const content = await fs.readFile(collectionPath, 'utf-8');
-    return JSON.parse(content);
+    const collection = JSON.parse(content);
+    const collectionSecrets = await secretVariableService.getCollectionSecrets(workspaceId, collectionId);
+    console.log('[CollectionSecrets] loadCollection:pre-hydrate', {
+      workspaceId,
+      collectionId,
+      fileVariables: maskVariablesForLog(collection?.variables),
+      settingsSecrets: maskSecretRecord(collectionSecrets)
+    });
+    collection.variables = secretVariableService.hydrateVariables(collection.variables, collectionSecrets);
+    console.log('[CollectionSecrets] loadCollection:post-hydrate', {
+      workspaceId,
+      collectionId,
+      hydratedVariables: maskVariablesForLog(collection?.variables)
+    });
+    return collection;
   });
 
   ipcMain.handle('workspace:saveCollection', async (_event, workspaceId: string, collectionId: string, collection: any) => {
     const collectionPath = getCollectionPath(workspaceId, collectionId);
-    const content = JSON.stringify(collection, null, 2);
+    const { sanitizedVariables, secrets } = secretVariableService.splitVariablesForSave(collection.variables);
+    console.log('[CollectionSecrets] saveCollection:split', {
+      workspaceId,
+      collectionId,
+      incomingVariables: maskVariablesForLog(collection?.variables),
+      sanitizedVariables: maskVariablesForLog(sanitizedVariables),
+      secrets: maskSecretRecord(secrets)
+    });
+    const collectionForFile = {
+      ...collection,
+      variables: sanitizedVariables
+    };
+
+    const content = JSON.stringify(collectionForFile, null, 2);
     await fs.writeFile(collectionPath, content, 'utf-8');
+    await secretVariableService.setCollectionSecrets(workspaceId, collectionId, secrets);
   });
 
   ipcMain.handle('workspace:createCollection', async (_event, workspaceId: string, name: string, protocol: string) => {
@@ -117,6 +147,8 @@ ipcMain.handle('workspace:renameCollection', async (_event, workspaceId: string,
     
     // Register new collection
     collectionRegistry.set(newCollectionId, newFileName);
+
+    await secretVariableService.copyCollectionSecrets(workspaceId, collectionId, newCollectionId);
     
     return newCollectionId;
   });
@@ -124,6 +156,8 @@ ipcMain.handle('workspace:renameCollection', async (_event, workspaceId: string,
   ipcMain.handle('workspace:deleteCollection', async (_event, workspaceId: string, collectionId: string) => {
     const collectionPath = getCollectionPath(workspaceId, collectionId);
     await fs.unlink(collectionPath);
+
+    await secretVariableService.deleteCollectionSecrets(workspaceId, collectionId);
     
     // Remove from registry
     collectionRegistry.delete(collectionId);
@@ -133,11 +167,20 @@ ipcMain.handle('workspace:renameCollection', async (_event, workspaceId: string,
     const collectionPath = getCollectionPath(workspaceId, collectionId);
     const content = await fs.readFile(collectionPath, 'utf-8');
     const collection = JSON.parse(content);
-    
-    collection.variables = variables;
+
+    const { sanitizedVariables, secrets } = secretVariableService.splitVariablesForSave(variables);
+    console.log('[CollectionSecrets] updateCollectionVariables:split', {
+      workspaceId,
+      collectionId,
+      incomingVariables: maskVariablesForLog(variables),
+      sanitizedVariables: maskVariablesForLog(sanitizedVariables),
+      secrets: maskSecretRecord(secrets)
+    });
+    collection.variables = sanitizedVariables;
     
     const newContent = JSON.stringify(collection, null, 2);
     await fs.writeFile(collectionPath, newContent, 'utf-8');
+    await secretVariableService.setCollectionSecrets(workspaceId, collectionId, secrets);
   });
 
   // Folder operations

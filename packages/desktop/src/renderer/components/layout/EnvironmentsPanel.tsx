@@ -1,7 +1,7 @@
 // EnvironmentsPanel - Environments list with full CRUD functionality
 import { useState, useRef, useEffect } from 'react';
 import { useWorkspace } from '../../contexts';
-import type { Environment, Variable } from '@apiquest/types';
+import type { Environment, VariableValue } from '@apiquest/types';
 import type { EnvironmentMetadata } from '../../types/environment';
 import { TextField } from '@radix-ui/themes';
 import { VariableEditorDialog } from '../variables/VariableEditor';
@@ -69,7 +69,7 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleSaveEnvVars = async (updatedVariables: Record<string, string | Variable>) => {
+  const handleSaveEnvVars = async (updatedVariables: Record<string, VariableValue>) => {
     if (!editingEnv || !envData) return;
     
     try {

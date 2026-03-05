@@ -343,7 +343,24 @@ function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: any) {
   
   type ScriptTypeOption = 'collectionPre' | 'collectionPost' | 'pre' | 'post' | string;
   const [scriptType, setScriptType] = React.useState('collectionPre');
-  
+
+  // Update Monaco IntelliSense context when script type or protocol changes
+  React.useEffect(() => {
+    const phase =
+      scriptType === 'collectionPre' ? 'collection-pre' :
+      scriptType === 'collectionPost' ? 'collection-post' :
+      scriptType === 'pre' ? 'pre-request' :
+      scriptType === 'post' ? 'post-request' :
+      'plugin-event';
+
+    pluginLoader.setActiveScriptIntellisenseContext({
+      protocol,
+      ownerType: 'collection',
+      phase,
+      eventName: phase === 'plugin-event' ? scriptType : undefined,
+    });
+  }, [scriptType, protocol]);
+
   // Get script value based on type
   const getScriptValue = () => {
     if (scriptType === 'collectionPre') return collection.collectionPreScript || '';

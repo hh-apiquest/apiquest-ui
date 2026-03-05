@@ -200,7 +200,7 @@ export function TabBar() {
         } else if (tab.type === 'collection') {
           icon = <RectangleStackIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />;
         } else if (tab.type === 'folder') {
-          icon = <FolderIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />;
+          icon = <FolderIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />;
         } else if (tab.type === 'runner') {
           const meta = tab.metadata as RunnerMetadata;
           // Show status icon

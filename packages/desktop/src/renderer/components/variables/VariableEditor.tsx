@@ -1,14 +1,14 @@
 // VariableEditor - Reusable key/value/vault editor for environments, collections, and globals
 import { useState, useMemo, useEffect } from 'react';
 import type { CSSProperties } from 'react';
-import type { Variable } from '@apiquest/types';
+import type { Variable, VariablePrimitive, VariableValue } from '@apiquest/types';
 import { pluginManagerService } from '../../services';
+import * as Checkbox from '@radix-ui/react-checkbox';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Select from '@radix-ui/react-select';
-import * as Checkbox from '@radix-ui/react-checkbox';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { TextField } from '@radix-ui/themes';
-import { TrashIcon, EllipsisVerticalIcon, Bars3Icon, KeyIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, EllipsisVerticalIcon, EllipsisHorizontalIcon, Bars3Icon, KeyIcon } from '@heroicons/react/24/outline';
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/20/solid';
 import {
   DndContext,
@@ -40,6 +40,25 @@ function getThemePortalContainer(): HTMLElement | undefined {
   return (document.querySelector('.radix-themes') as HTMLElement | null) ?? document.body;
 }
 
+function coerceValueToType(value: VariablePrimitive, type: Variable['type'] | undefined): VariablePrimitive {
+  if (type === 'null') return null;
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') return value.toLowerCase() === 'true';
+    if (typeof value === 'number') return value !== 0;
+    return false;
+  }
+  if (type === 'number') {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    if (value === null || value === '') return 0;
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  // default string
+  return value === null ? '' : String(value);
+}
+
 interface VariableEditorProps {
   title: string;
   rows: VariableRow[];
@@ -51,6 +70,7 @@ export function VariableEditor({
   title, 
   rows,
   onRowsChange,
+  showEnabled = true,
 }: VariableEditorProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const vaultPlugins = pluginManagerService.getAllVaultPlugins();
@@ -106,10 +126,18 @@ export function VariableEditor({
         .ve-row:hover { background: var(--gray-2); }
         .ve-drag-handle:hover { color: var(--gray-11); }
 
+        .ve-checkbox {
+          width: 14px; height: 14px; border-radius: 3px;
+          border: 1px solid var(--gray-7);
+          background: transparent; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
         .ve-checkbox[data-state="checked"] {
           background: var(--accent-9);
           border-color: var(--accent-9);
         }
+        .ve-checkbox-ind { color: white; display: flex; align-items: center; }
 
         .ve-select-item[data-highlighted],
         .ve-menu-item[data-highlighted] {
@@ -119,17 +147,19 @@ export function VariableEditor({
 
         .ve-menu-item[data-disabled] { opacity: 0.6; }
 
-        /* Ghost TextField styling for table inputs */
+        /* Compact bordered TextField styling to match editor tables */
         .ve-row .rt-TextFieldRoot {
-          border: none !important;
+          width: 100% !important;
+          border: 1px solid var(--gray-6) !important;
           box-shadow: none !important;
-          background: transparent !important;
+          background: var(--color-background) !important;
+          border-radius: 6px !important;
           padding: 0 !important;
         }
 
         .ve-row .rt-TextFieldInput {
           background: transparent !important;
-          padding: 2px 4px !important;
+          padding: 3px 6px !important;
           font-size: 12px !important;
         }
 
@@ -142,7 +172,7 @@ export function VariableEditor({
         <h2 className="font-semibold" style={{ fontSize: '13px', color: 'var(--gray-12)' }}>{title}</h2>
         <button
           onClick={addVariable}
-          className="px-2 py-1 text-xs rounded cursor-pointer"
+          className="px-2 py-0.5 text-xs rounded cursor-pointer"
           style={{
             background: 'var(--accent-9)',
             color: 'white',
@@ -156,22 +186,20 @@ export function VariableEditor({
       <div className="flex-1 overflow-auto">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <table className="w-full text-xs" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-            <thead className="text-xs" style={{ position: 'sticky', top: 0, background: 'var(--gray-2)', color: 'var(--gray-12)', zIndex: 1 }}>
+            <thead className="text-xs" style={{ position: 'sticky', top: 0, background: 'var(--gray-2)', color: 'var(--gray-12)', zIndex: 1, borderBottom: '1px solid var(--gray-6)' }}>
               <tr>
-                <th className="text-center font-semibold p-2" style={{ width: '32px' }}></th>
-                <th className="text-center font-semibold p-2" style={{ width: '44px' }}></th>
-                <th className="text-left font-semibold p-2">Variable</th>
-                <th className="text-left font-semibold p-2">Type</th>
-                <th className="text-left font-semibold p-2">Value</th>
-                <th className="text-center font-semibold p-2" style={{ width: '88px' }}></th>
-                <th className="text-center font-semibold p-2" style={{ width: '44px' }}></th>
+                <th className="text-center font-semibold p-1" style={{ width: '28px' }}></th>
+                {showEnabled && <th className="text-center font-semibold p-1" style={{ width: '36px' }}>On</th>}
+                <th className="text-left font-semibold p-1">Variable</th>
+                <th className="text-left font-semibold p-1">Value</th>
+                <th className="text-center font-semibold p-1" style={{ width: '36px' }}></th>
               </tr>
             </thead>
             <SortableContext items={rows.map((_, i) => i)} strategy={verticalListSortingStrategy}>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center" style={{ padding: '32px 8px', color: 'var(--gray-9)' }}>
+                    <td colSpan={showEnabled ? 5 : 4} className="text-center" style={{ padding: '24px 8px', color: 'var(--gray-9)' }}>
                       No variables defined. Click "+ Add Variable" to create one.
                     </td>
                   </tr>
@@ -184,6 +212,7 @@ export function VariableEditor({
                       index={index}
                       isEditing={editingId === index}
                       vaultPlugins={vaultPlugins}
+                      showEnabled={showEnabled}
                       onUpdate={(updates) => updateVariable(index, updates)}
                       onDelete={() => deleteVariable(index)}
                       onEdit={() => setEditingId(index)}
@@ -206,6 +235,7 @@ interface SortableVariableRowProps {
   index: number;
   isEditing: boolean;
   vaultPlugins: any[];
+  showEnabled: boolean;
   onUpdate: (updates: Partial<VariableRow>) => void;
   onDelete: () => void;
   onEdit: () => void;
@@ -252,6 +282,7 @@ interface VariableRowProps {
   index: number;
   isEditing: boolean;
   vaultPlugins: any[];
+  showEnabled: boolean;
   onUpdate: (updates: Partial<VariableRow>) => void;
   onDelete: () => void;
   onEdit: () => void;
@@ -262,6 +293,7 @@ function VariableRowContent({
   variable, 
   isEditing,
   vaultPlugins,
+  showEnabled,
   onUpdate, 
   onDelete,
   onEdit,
@@ -279,217 +311,219 @@ function VariableRowContent({
     }))
   ];
 
+  const setType = (nextType: Variable['type']) => {
+    onUpdate({
+      type: nextType,
+      value: coerceValueToType(variable.value, nextType),
+    });
+  };
+
   return (
     <>
       {/* Enabled */}
-      <td className="px-3 py-2 text-center border-r">
-        <div className="inline-flex items-center justify-center">
-          <Checkbox.Root
-            checked={variable.enabled !== false}
-            onCheckedChange={(checked: boolean) => onUpdate({ enabled: Boolean(checked) })}
-            className="ve-checkbox w-4 h-4 flex items-center justify-center rounded cursor-pointer"
-            style={{
-              border: '1px solid var(--gray-7)',
-              background: 'var(--color-background)',
-              WebkitAppRegion: 'no-drag'
-            } as AppRegionStyle}
-          >
-            <Checkbox.Indicator style={{ color: 'white', lineHeight: 0 }}>
-              <CheckIcon className="w-3 h-3" />
-            </Checkbox.Indicator>
-          </Checkbox.Root>
-        </div>
-      </td>
+      {showEnabled && (
+        <td className="px-2 py-1 text-center border-r">
+          <div className="inline-flex items-center justify-center">
+            <Checkbox.Root
+              checked={variable.enabled !== false}
+              onCheckedChange={(checked) => onUpdate({ enabled: checked === true })}
+              className="ve-checkbox"
+              style={{ WebkitAppRegion: 'no-drag' } as AppRegionStyle}
+              title={variable.enabled === false ? 'Enable variable' : 'Disable variable'}
+            >
+              <Checkbox.Indicator className="ve-checkbox-ind">
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                  <path d="M10 3L4.5 8.5L2 6"
+                    stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Checkbox.Indicator>
+            </Checkbox.Root>
+          </div>
+        </td>
+      )}
 
       {/* Key with Secret Toggle */}
-      <td className="px-3 py-2 border-r">
-        <div className="relative flex items-center">
+      <td className="px-2 py-1 border-r">
+        <div className="relative flex items-center w-full">
           <TextField.Root
             size="1"
             value={variable.key}
             onChange={(e) => onUpdate({ key: e.target.value })}
             onFocus={onEdit}
             onBlur={onStopEdit}
-            style={{ paddingRight: '24px' }}
+            style={{ paddingRight: '44px', width: '100%' }}
           />
-          <button
-            onClick={() => onUpdate({ isSecret: !variable.isSecret })}
-            className="absolute right-0 p-0.5 bg-transparent border-none cursor-pointer"
-            style={{
-              color: variable.isSecret ? 'var(--accent-9)' : 'var(--gray-8)',
-              WebkitAppRegion: 'no-drag'
-            } as AppRegionStyle}
-            title={variable.isSecret ? 'Secret variable (click to unset)' : 'Mark as secret'}
-          >
-            <KeyIcon className="w-4 h-4" />
-          </button>
-        </div>
-      </td>
-
-      {/* Type */}
-      <td className="px-3 py-2 border-r">
-        <Select.Root
-          value={variable.type || 'string'}
-          onValueChange={(value: string) => onUpdate({ type: value as Variable['type'] })}
-        >
-          <Select.Trigger
-            className="inline-flex items-center justify-between w-full rounded-md text-xs cursor-pointer"
-            style={{
-              padding: '2px 6px',
-              background: 'transparent',
-              border: '1px solid transparent',
-              color: 'var(--gray-12)',
-              WebkitAppRegion: 'no-drag'
-            } as AppRegionStyle}
-          >
-            <Select.Value />
-            <Select.Icon style={{ marginLeft: '6px', color: 'var(--gray-9)' }}>
-              <ChevronDownIcon className="w-4 h-4" />
-            </Select.Icon>
-          </Select.Trigger>
-
-          <Select.Portal container={portalContainer}>
-            <Select.Content
+          <div className="absolute right-0 inline-flex items-center" style={{ gap: '2px' }}>
+            <button
+              onClick={() => onUpdate({ isSecret: !variable.isSecret })}
+              className="bg-transparent border-none cursor-pointer"
               style={{
-                background: 'var(--color-background)',
-                border: '1px solid var(--gray-6)',
-                borderRadius: '8px',
-                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
-                overflow: 'hidden',
-                zIndex: 50,
-                color: 'var(--gray-12)',
+                paddingLeft: '4px',
+                paddingRight: '0px',
+                color: variable.isSecret ? 'var(--accent-9)' : 'var(--gray-8)',
                 WebkitAppRegion: 'no-drag'
               } as AppRegionStyle}
-              position="popper"
-              sideOffset={4}
+              title={variable.isSecret ? 'Secret variable (click to unset)' : 'Mark as secret'}
             >
-              <Select.Viewport style={{ padding: '4px' }}>
-                <Select.Item
-                  value="string"
-                  className="ve-select-item"
+              <KeyIcon className="w-3.5 h-3.5" />
+            </button>
+
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="bg-transparent border-none cursor-pointer"
                   style={{
-                    padding: '6px 8px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
+                    paddingLeft: '4px',
+                    paddingRight: '0px',
+                    color: 'var(--gray-9)',
+                    WebkitAppRegion: 'no-drag'
+                  } as AppRegionStyle}
+                  title="Variable options"
                 >
-                  <Select.ItemText>String</Select.ItemText>
-                </Select.Item>
-                <Select.Item
-                  value="number"
-                  className="ve-select-item"
+                  <EllipsisHorizontalIcon className="w-3.5 h-3.5" />
+                </button>
+              </DropdownMenu.Trigger>
+
+              <DropdownMenu.Portal container={portalContainer}>
+                <DropdownMenu.Content
                   style={{
-                    padding: '6px 8px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
+                    background: 'var(--color-background)',
+                    border: '1px solid var(--gray-6)',
+                    borderRadius: '8px',
+                    boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+                    overflow: 'hidden',
+                    zIndex: 50,
+                    minWidth: '180px',
+                    color: 'var(--gray-12)',
+                    WebkitAppRegion: 'no-drag'
+                  } as AppRegionStyle}
+                  sideOffset={4}
                 >
-                  <Select.ItemText>Number</Select.ItemText>
-                </Select.Item>
-                <Select.Item
-                  value="boolean"
-                  className="ve-select-item"
-                  style={{
-                    padding: '6px 8px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    userSelect: 'none'
-                  }}
-                >
-                  <Select.ItemText>Boolean</Select.ItemText>
-                </Select.Item>
-              </Select.Viewport>
-            </Select.Content>
-          </Select.Portal>
-        </Select.Root>
+                  <DropdownMenu.Label className="px-2 py-1 text-xs font-semibold text-left" style={{ color: 'var(--gray-9)' }}>
+                    Type
+                  </DropdownMenu.Label>
+                  {(['string', 'number', 'boolean', 'null'] as const).map((t) => (
+                    <DropdownMenu.Item
+                      key={t}
+                      className="ve-menu-item flex items-center justify-between px-2 py-1 text-xs cursor-pointer"
+                      style={{ WebkitAppRegion: 'no-drag' } as AppRegionStyle}
+                      onClick={() => setType(t)}
+                    >
+                      <span style={{ textTransform: 'capitalize' }}>{t}</span>
+                      {(variable.type ?? 'string') === t && (
+                        <CheckIcon className="w-3.5 h-3.5" style={{ color: 'var(--accent-9)' }} />
+                      )}
+                    </DropdownMenu.Item>
+                  ))}
+
+                  <DropdownMenu.Separator style={{ height: '1px', background: 'var(--gray-6)' }} />
+                  <DropdownMenu.Label className="px-2 py-1 text-xs font-semibold text-left" style={{ color: 'var(--gray-9)' }}>
+                    Provider
+                  </DropdownMenu.Label>
+                  {providers.map((provider) => (
+                    <DropdownMenu.Item
+                      key={provider.value || 'none'}
+                      className="ve-menu-item flex items-center justify-between px-2 py-1 text-xs cursor-pointer"
+                      style={{ WebkitAppRegion: 'no-drag' } as AppRegionStyle}
+                      onClick={() => onUpdate({ provider: provider.value })}
+                    >
+                      <span>{provider.label}</span>
+                      {variable.provider === provider.value && (
+                        <CheckIcon className="w-3.5 h-3.5" style={{ color: 'var(--accent-9)' }} />
+                      )}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          </div>
+        </div>
       </td>
 
       {/* Value */}
-      <td className="px-3 py-2 border-r">
-        <TextField.Root
-          size="1"
-          type={variable.isSecret ? 'password' : 'text'}
-          value={variable.value}
-          onChange={(e) => onUpdate({ value: e.target.value })}
-          onFocus={onEdit}
-          onBlur={onStopEdit}
-        />
-      </td>
-
-      {/* Provider Menu */}
-      <td className="p-2 border-r">
-        <div className="flex items-center justify-between gap-2">
-          {variable.provider ? (
-            <span style={{
-              padding: '2px 6px',
-              fontSize: '10px',
-              fontWeight: 600,
-              borderRadius: '999px',
-              background: 'var(--accent-3)',
-              color: 'var(--accent-11)',
-              whiteSpace: 'nowrap'
-            }}>
-              {variable.provider === 'env' ? 'ENV' : variable.provider.replace('vault:', '')}
-            </span>
-          ) : (
-            <span></span>
-          )}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className="p-1 rounded-md bg-transparent border-none cursor-pointer"
-                style={{
-                  color: 'var(--gray-9)',
-                  WebkitAppRegion: 'no-drag'
-                } as AppRegionStyle}
-                title="Select provider"
-              >
-                <EllipsisVerticalIcon className="w-4 h-4" />
-              </button>
-            </DropdownMenu.Trigger>
-
-          <DropdownMenu.Portal container={portalContainer}>
-            <DropdownMenu.Content
+      <td className="px-2 py-1 border-r">
+        {variable.type === 'boolean' ? (
+          <Select.Root
+            value={String(coerceValueToType(variable.value, 'boolean'))}
+            onValueChange={(value) => onUpdate({ value: value === 'true' })}
+          >
+            <Select.Trigger
+              className="inline-flex items-center justify-between w-full rounded-md text-xs cursor-pointer"
               style={{
-                background: 'var(--color-background)',
-                border: '1px solid var(--gray-6)',
-                borderRadius: '8px',
-                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
-                overflow: 'hidden',
-                zIndex: 50,
-                minWidth: '180px',
+                padding: '2px 6px',
+                background: 'transparent',
+                border: '1px solid transparent',
                 color: 'var(--gray-12)',
                 WebkitAppRegion: 'no-drag'
               } as AppRegionStyle}
-              sideOffset={4}
             >
-              <DropdownMenu.Label className="px-3 py-1.5 text-xs font-semibold text-left" style={{ color: 'var(--gray-9)' }}>
-                Provider
-              </DropdownMenu.Label>
-              <DropdownMenu.Separator style={{ height: '1px', background: 'var(--gray-6)' }} />
-              {providers.map((provider) => (
-                <DropdownMenu.Item
-                  key={provider.value || 'none'}
-                  className="ve-menu-item flex items-center justify-between px-3 py-1.5 text-xs cursor-pointer"
-                  style={{ WebkitAppRegion: 'no-drag' } as AppRegionStyle}
-                  onClick={() => onUpdate({ provider: provider.value })}
-                >
-                  <span>{provider.label}</span>
-                  {variable.provider === provider.value && (
-                    <CheckIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />
-                  )}
-                </DropdownMenu.Item>
-              ))}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-        </div>
+              <Select.Value />
+              <Select.Icon style={{ marginLeft: '6px', color: 'var(--gray-9)' }}>
+                <ChevronDownIcon className="w-4 h-4" />
+              </Select.Icon>
+            </Select.Trigger>
+            <Select.Portal container={portalContainer}>
+              <Select.Content
+                style={{
+                  background: 'var(--color-background)',
+                  border: '1px solid var(--gray-6)',
+                  borderRadius: '8px',
+                  boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+                  overflow: 'hidden',
+                  zIndex: 50,
+                  color: 'var(--gray-12)',
+                  WebkitAppRegion: 'no-drag'
+                } as AppRegionStyle}
+                position="popper"
+                sideOffset={4}
+              >
+                <Select.Viewport style={{ padding: '4px' }}>
+                  <Select.Item value="true" className="ve-select-item" style={{ padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
+                    <Select.ItemText>true</Select.ItemText>
+                  </Select.Item>
+                  <Select.Item value="false" className="ve-select-item" style={{ padding: '6px 8px', borderRadius: '6px', cursor: 'pointer', userSelect: 'none' }}>
+                    <Select.ItemText>false</Select.ItemText>
+                  </Select.Item>
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
+        ) : variable.type === 'null' ? (
+          <TextField.Root
+            size="1"
+            value="null"
+            readOnly
+            onFocus={onEdit}
+            onBlur={onStopEdit}
+            style={{ width: '100%' }}
+          />
+        ) : (
+          <TextField.Root
+            size="1"
+            type={variable.isSecret ? 'password' : variable.type === 'number' ? 'number' : 'text'}
+            value={
+              variable.type === 'number'
+                ? (typeof variable.value === 'number' ? variable.value : Number(coerceValueToType(variable.value, 'number')))
+                : String(coerceValueToType(variable.value, 'string'))
+            }
+            onChange={(e) => {
+              if (variable.type === 'number') {
+                const raw = e.target.value;
+                onUpdate({ value: raw === '' ? 0 : Number(raw) });
+                return;
+              }
+              onUpdate({ value: e.target.value });
+            }}
+            onFocus={onEdit}
+            onBlur={onStopEdit}
+            style={{ width: '100%' }}
+          />
+        )}
       </td>
 
       {/* Delete */}
-      <td className="p-2 text-center">
+      <td className="p-1 text-center">
         <button
           onClick={onDelete}
           className="p-1 rounded-md bg-transparent border-none cursor-pointer"
@@ -508,8 +542,8 @@ interface VariableEditorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  variables: Record<string, string | Variable>;
-  onSave: (variables: Record<string, string | Variable>) => void;
+  variables: Record<string, VariableValue>;
+  onSave: (variables: Record<string, VariableValue>) => void;
   showEnabled?: boolean;
 }
 
@@ -530,9 +564,9 @@ export function VariableEditorDialog({
   useEffect(() => {
     if (open) {
       const initialRows = Object.entries(variables).map(([key, val]) => {
-        const variable: Variable = typeof val === 'string' 
-          ? { value: val } as Variable
-          : val;
+        const variable: Variable = (typeof val === 'object' && val !== null && 'value' in val)
+          ? (val as Variable)
+          : { value: val as VariablePrimitive };
         return { ...variable, key };
       });
       setRows(initialRows);
@@ -559,11 +593,11 @@ export function VariableEditorDialog({
     if (!isValid) return;
     
     // Filter empty keys and convert to Record format
-    const record: Record<string, string | Variable> = {};
+    const record: Record<string, VariableValue> = {};
     for (const row of rows) {
       const { key, ...varData } = row;
       if (key.trim()) {  // Only include non-empty keys
-        // If only value exists, store as string; otherwise as Variable object
+        // If only value exists, store primitive; otherwise as Variable object
         if (Object.keys(varData).length === 1 && varData.value !== undefined) {
           record[key] = varData.value;
         } else {

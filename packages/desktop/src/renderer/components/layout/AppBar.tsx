@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useWorkspace, useTheme, useSettings, useScreenMode } from '../../contexts';
 import type { WorkspaceWithMetadata } from '../../types/quest';
-import type { Variable } from '@apiquest/types';
+import type { VariableValue } from '@apiquest/types';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { TextField } from '@radix-ui/themes';
 import { VariableEditorDialog } from '../variables/VariableEditor';
@@ -27,7 +27,7 @@ export function AppBar() {
   const { settings } = useSettings();
   const { setMode } = useScreenMode();
   const [showGlobalVars, setShowGlobalVars] = useState(false);
-  const [globalVariables, setGlobalVariables] = useState<Record<string, string | Variable>>({});
+  const [globalVariables, setGlobalVariables] = useState<Record<string, VariableValue>>({});
   const [workspaces, setWorkspaces] = useState<WorkspaceWithMetadata[]>([]);
   const [workspaceSearch, setWorkspaceSearch] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -60,7 +60,7 @@ export function AppBar() {
     }
   };
 
-  const handleSaveGlobalVars = async (vars: Record<string, string | Variable>) => {
+  const handleSaveGlobalVars = async (vars: Record<string, VariableValue>) => {
     try {
       await window.quest.globalVariables.save(vars);
       setGlobalVariables(vars);
@@ -310,7 +310,7 @@ export function AppBar() {
         title="Global Variables"
         variables={globalVariables}
         onSave={handleSaveGlobalVars}
-        showEnabled={false}
+        showEnabled={true}
       />
     </div>
   );

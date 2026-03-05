@@ -54,6 +54,8 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
       <Tabs.List className="flex border-b" style={{ background: 'var(--gray-2)' }}>
         <style>{`
           .console-tab-trigger[data-state=active] {
+            padding-bottom: 5px;
+            padding-top: 5px;
             background: var(--gray-3);
             border-bottom: 2px solid var(--accent-9);
           }

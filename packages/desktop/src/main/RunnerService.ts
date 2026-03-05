@@ -6,6 +6,8 @@ import path from 'path';
 import { app, BrowserWindow } from 'electron';
 import { promises as fs } from 'fs';
 import { workspaceRegistry, collectionRegistry } from './handlers/workspace.js';
+import { secretVariableService } from './SecretVariableService.js';
+import { maskSecretRecord, maskVariablesForLog } from './utils/mask.js';
 
 class RunnerService {
   private pluginsDir: string;
@@ -51,7 +53,20 @@ class RunnerService {
     
     const collectionPath = path.join(workspacePath, 'collections', fileName);
     const content = await fs.readFile(collectionPath, 'utf-8');
-    return JSON.parse(content);
+    const collection = JSON.parse(content) as Collection;
+
+    const collectionSecrets = await secretVariableService.getCollectionSecrets(workspaceId, collectionId);
+    (collection as any).variables = secretVariableService.hydrateVariables((collection as any).variables, collectionSecrets);
+
+    console.log('[RunnerService] loadCollection hydrated variables', {
+      workspaceId,
+      collectionId,
+      fileVariables: maskVariablesForLog((JSON.parse(content) as any)?.variables),
+      settingsSecrets: maskSecretRecord(collectionSecrets),
+      hydratedVariables: maskVariablesForLog((collection as any).variables)
+    });
+
+    return collection;
   }
 
   private async loadEnvironment(workspaceId: string, environmentId: string): Promise<Record<string, string>> {
@@ -258,10 +273,23 @@ class RunnerService {
         globalVariables: variables?.global
       });
 
+      console.log('[RunnerService] executeRequest run options snapshot', {
+        executionId,
+        collectionVariables: maskVariablesForLog((ephemeralCollection as any).variables),
+        environmentVariables: maskVariablesForLog(variables?.environment),
+        globalVariables: maskVariablesForLog(variables?.global)
+      });
+
       // Mark execution as completed
       const execution = this.activeExecutions.get(executionId);
       if (execution) {
         execution.status = 'completed';
+      }
+
+      // Surface validation errors before trying to read the response
+      if (runResult.requestResults.length === 0 && runResult.validationErrors && runResult.validationErrors.length > 0) {
+        const messages = runResult.validationErrors.map(e => e.message).join('; ');
+        throw new Error(`Validation failed: ${messages}`);
       }
 
       const requestResult = runResult.requestResults[0];
@@ -272,6 +300,10 @@ class RunnerService {
         responseKeys: requestResult?.response ? Object.keys(requestResult.response) : [],
         response: requestResult?.response
       });
+
+      if (!requestResult) {
+        throw new Error('Request execution produced no result — the request may have been filtered out or skipped.');
+      }
       
       return {
         executionId,

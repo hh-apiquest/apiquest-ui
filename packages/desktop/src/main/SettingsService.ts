@@ -2,6 +2,17 @@ import { app } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+export type SecretPrimitive = string | number | boolean | null;
+
+export type WorkspaceSecrets = {
+  collections?: Record<string, Record<string, SecretPrimitive>>;
+  environments?: Record<string, Record<string, SecretPrimitive>>;
+};
+
+export type SecretsSettings = {
+  workspaces?: Record<string, WorkspaceSecrets>;
+};
+
 export type AppSettings = {
   ui?: {
     workspaceDropdownLimit?: number;
@@ -27,6 +38,7 @@ export type AppSettings = {
      */
     gitPath?: string;
   };
+  secrets?: SecretsSettings;
 };
 
 const DEFAULT_SETTINGS: Required<AppSettings> = {
@@ -42,6 +54,9 @@ const DEFAULT_SETTINGS: Required<AppSettings> = {
   tools: {
     npmPath: '',
     gitPath: ''
+  },
+  secrets: {
+    workspaces: {}
   }
 };
 

@@ -1,5 +1,7 @@
 import React from 'react';
-import type { IProtocolPluginUI, UITab, UITabProps, RequestBadge, SummaryLineComponent, ResponseUITab, ProtocolViewProps, RequestSummary, HeaderEntry, GeneratedHeaderEntry, HeadersEditorState, ParamEntry, GeneratedParamEntry, ParamsEditorState } from '@apiquest/plugin-ui-types';
+import type { IProtocolPluginUI, UITab, UITabProps, RequestBadge, SummaryLineComponent, ResponseUITab, ProtocolViewProps, RequestSummary, HeaderEntry, GeneratedHeaderEntry, HeadersEditorState, ParamEntry, GeneratedParamEntry, ParamsEditorState, ScriptIntellisenseContext, ScriptIntellisense } from '@apiquest/plugin-ui-types';
+import httpRequestDecl from '@apiquest/plugin-http/dist/scriptDeclarations.request.d.ts?raw';
+import httpResponseDecl from '@apiquest/plugin-http/dist/scriptDeclarations.response.d.ts?raw';
 import type { Request, ProtocolResponse } from '@apiquest/types';
 import type { HttpResponseData, HttpRequestData, HttpBodyData, HttpBodyKV } from '@apiquest/plugin-http';
 
@@ -1176,6 +1178,38 @@ export const httpPluginUI: IProtocolPluginUI = {
       { id: 'headers', label: 'Headers', position: 20, component: HttpResponseHeadersTab },
       { id: 'cookies', label: 'Cookies', position: 30, component: HttpResponseCookiesTab }
     ];
+  },
+
+  getScriptIntellisense(context: ScriptIntellisenseContext): ScriptIntellisense[] {
+    const { phase } = context;
+
+    // Folder/collection lifecycle phases have no protocol-specific symbols
+    if (
+      phase === 'folder-pre' ||
+      phase === 'folder-post' ||
+      phase === 'collection-pre' ||
+      phase === 'collection-post'
+    ) {
+      return [];
+    }
+
+    if (phase === 'pre-request') {
+      // Pre-request: request object is available; response is not yet available
+      return [
+        { content: httpRequestDecl, uri: 'ts:quest-http-request.d.ts' },
+      ];
+    }
+
+    if (phase === 'post-request') {
+      // Post-request: both request and response are available
+      return [
+        { content: httpRequestDecl, uri: 'ts:quest-http-request.d.ts' },
+        { content: httpResponseDecl, uri: 'ts:quest-http-response.d.ts' },
+      ];
+    }
+
+    // plugin-event: HTTP has no custom plugin events so return nothing
+    return [];
   },
 };
 

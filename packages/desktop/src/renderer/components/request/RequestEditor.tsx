@@ -7,11 +7,12 @@ import { useAutoSave } from '../../hooks/useAutoSave';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { Switch } from '@radix-ui/themes';
-import type { Request, Collection } from '@apiquest/types';
+import type { Request, Collection, VariableValue } from '@apiquest/types';
 import type { UITabProps } from '@apiquest/plugin-ui-types';
 import { ResponseViewer } from '../response/ResponseViewer';
 import { OptionsTab } from './OptionsTab';
 import { resolveInheritedAuth } from '../../utils/authInheritance';
+import { extractVariablePrimitive } from '../../utils/variables';
 
 interface RequestEditorProps {
   tab: Tab;
@@ -294,48 +295,70 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     setIsSending(true);
 
     try {
-      let collectionVariables = {};
+      let collectionVariables: Record<string, VariableValue> = {};
       try {
         const collection = await window.quest.workspace.loadCollection(workspace.id, tab.collectionId);
-        collectionVariables = collection.variables || {};
+        collectionVariables = Object.entries(collection.variables || {}).reduce((acc, [key, value]) => {
+          const primitive = extractVariablePrimitive(value as VariableValue);
+          if (primitive !== null) {
+            acc[key] = primitive;
+          }
+          return acc;
+        }, {} as Record<string, VariableValue>);
+        console.log('[RequestEditor] Ephemeral variable build: collection', {
+          collectionId: tab.collectionId,
+          variables: collectionVariables
+        });
       } catch (error) {
         console.warn('Failed to load collection variables:', error);
       }
 
-      let environmentVariables = {};
+      let environmentVariables: Record<string, VariableValue> = {};
       if (activeEnvironment) {
         try {
           const env = await loadEnvironment(activeEnvironment.fileName);
           environmentVariables = Object.entries(env.variables || {}).reduce((acc, [key, value]) => {
-            if (typeof value === 'object' && 'value' in value && value.enabled !== false) {
-              acc[key] = value.value;
-            } else if (typeof value === 'string') {
-              acc[key] = value;
+            const primitive = extractVariablePrimitive(value);
+            if (primitive !== null) {
+              acc[key] = primitive;
             }
             return acc;
-          }, {} as Record<string, string>);
+          }, {} as Record<string, VariableValue>);
+          console.log('[RequestEditor] Ephemeral variable build: environment', {
+            environmentId: activeEnvironment.fileName,
+            variables: environmentVariables
+          });
         } catch (error) {
           console.warn('Failed to load environment variables:', error);
         }
       }
 
-      let globalVariables = {};
+      let globalVariables: Record<string, VariableValue> = {};
       try {
         const globals = await window.quest.globalVariables.load();
         globalVariables = Object.entries(globals || {}).reduce((acc, [key, value]) => {
-          if (typeof value === 'object' && value !== null && 'value' in value) {
-            const varObj = value as { value: unknown; enabled?: boolean };
-            if (varObj.enabled !== false && typeof varObj.value === 'string') {
-              acc[key] = varObj.value;
-            }
-          } else if (typeof value === 'string') {
-            acc[key] = value;
+          const primitive = extractVariablePrimitive(value);
+          if (primitive !== null) {
+            acc[key] = primitive;
           }
           return acc;
-        }, {} as Record<string, string>);
+        }, {} as Record<string, VariableValue>);
+        console.log('[RequestEditor] Ephemeral variable build: global', {
+          variables: globalVariables
+        });
       } catch (error) {
         console.warn('Failed to load global variables:', error);
       }
+
+      console.log('[RequestEditor] Ephemeral variable build: final payload', {
+        collectionId: tab.collectionId,
+        environmentId: activeEnvironment?.fileName || null,
+        variables: {
+          collection: collectionVariables,
+          environment: environmentVariables,
+          global: globalVariables
+        }
+      });
 
       // Create a modified request if bypassing execution control
       const effectiveRequest = bypassExecutionControl
@@ -552,6 +575,22 @@ function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabPr
   
   type ScriptTypeOption = 'pre' | 'post' | string;
   const [scriptType, setScriptType] = React.useState<ScriptTypeOption>('pre');
+
+  // Update Monaco IntelliSense context whenever the script type or protocol changes
+  React.useEffect(() => {
+    const phase = scriptType === 'pre'
+      ? 'pre-request' as const
+      : scriptType === 'post'
+        ? 'post-request' as const
+        : 'plugin-event' as const;
+
+    pluginLoader.setActiveScriptIntellisenseContext({
+      protocol,
+      ownerType: 'request',
+      phase,
+      eventName: phase === 'plugin-event' ? scriptType : undefined,
+    });
+  }, [scriptType, protocol]);
   
   const getScriptValue = () => {
     if (scriptType === 'pre') return request.preRequestScript || '';
@@ -587,7 +626,7 @@ function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabPr
     <div className="flex h-full">
       <div className="w-48 pr-2 border-r flex flex-col" style={{ borderColor: 'var(--gray-6)', gap: '12px' }}>
         <div>
-          <div className="text-xs font-semibold mb-1 px-2 script-tab-label">Universal</div>
+          <div className="text-xs font-semibold mb-1 px-2 script-tab-label">Per Request</div>
           <div className="flex flex-col gap-1">
             <button
               onClick={() => setScriptType('pre')}

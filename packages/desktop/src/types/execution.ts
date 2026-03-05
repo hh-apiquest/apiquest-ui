@@ -1,5 +1,7 @@
 // Execution types - shared between main and renderer processes
 
+import type { VariableValue } from '@apiquest/types';
+
 /**
  * ExecutionEvent - Generic event emitted during execution
  * Supports both standard runner events and custom plugin events
@@ -21,9 +23,9 @@ export interface RunRequestParams {
   protocol: string;
   request: any;              // Modified request object (type from fracture)
   variables?: {
-    collection?: Record<string, string>;
-    environment?: Record<string, string>;
-    global?: Record<string, string>;
+    collection?: Record<string, VariableValue>;
+    environment?: Record<string, VariableValue>;
+    global?: Record<string, VariableValue>;
   };
   options?: any;             // RuntimeOptions from fracture
 }

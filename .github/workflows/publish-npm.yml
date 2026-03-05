@@ -73,26 +73,32 @@ jobs:
         working-directory: apiquest-ui
         run: yarn build
 
-      - name: Publish @apiquest/plugin-ui-types
-        working-directory: apiquest-ui/packages/plugin-ui-types
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish packages (skip already-published versions)
+        working-directory: apiquest-ui
+        run: |
+          set -euo pipefail
 
-      - name: Publish @apiquest/plugin-http-ui
-        working-directory: apiquest-ui/packages/plugin-http-ui
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          publish_if_needed() {
+            local package_dir="$1"
+            local package_name="$2"
+            local package_version
 
-      - name: Publish @apiquest/plugin-auth-ui
-        working-directory: apiquest-ui/packages/plugin-auth-ui
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            package_version=$(node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('${package_dir}/package.json','utf8'));process.stdout.write(p.version);")
 
-      - name: Publish @apiquest/plugin-sse-ui
-        working-directory: apiquest-ui/packages/plugin-sse-ui
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            echo "Checking ${package_name}@${package_version}"
+
+            if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+              echo "Skipping ${package_name}@${package_version} (already exists on npm)"
+            else
+              echo "Publishing ${package_name}@${package_version}"
+              (
+                cd "${package_dir}"
+                npm publish --provenance --access public
+              )
+            fi
+          }
+
+          publish_if_needed "packages/plugin-ui-types" "@apiquest/plugin-ui-types"
+          publish_if_needed "packages/plugin-http-ui" "@apiquest/plugin-http-ui"
+          publish_if_needed "packages/plugin-auth-ui" "@apiquest/plugin-auth-ui"
+          publish_if_needed "packages/plugin-sse-ui" "@apiquest/plugin-sse-ui"
