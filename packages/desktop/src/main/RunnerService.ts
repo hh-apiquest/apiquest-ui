@@ -215,7 +215,7 @@ class RunnerService {
    */
   async executeRequest(params: RunRequestParams) {
     const { executionId, protocol, request, variables, workspaceId, collectionId } = params;
-    
+
     const collection = await this.loadCollection(workspaceId, collectionId);
     
     console.log('[RunnerService] Loaded collection:', {
@@ -255,7 +255,7 @@ class RunnerService {
     
     try {
       const ephemeralCollection = this.buildEphemeralCollection(collection, request);
-      
+
       console.log('[RunnerService] Built ephemeral collection:', {
         id: ephemeralCollection.info.id,
         collectionPreScript: ephemeralCollection.collectionPreScript,

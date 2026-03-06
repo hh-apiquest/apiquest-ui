@@ -175,41 +175,45 @@ function UrlBox({
 }
 
 
+/** HttpRequestData['params'] element type */
+type HttpParam = NonNullable<HttpRequestData['params']>[number];
+
 /**
- * Convert the stored Record<string,string> params to a ParamEntry[] for the editor.
+ * Convert stored params (Array<HttpParam>) to ParamEntry[] for the editor.
  * All imported entries start as enabled since disabled state is transient (_ui).
  */
-function recordToParamEntries(record: Record<string, string> | undefined): ParamEntry[] {
-  if (!record) return [];
-  return Object.entries(record).map(([key, value]) => ({
-    key,
-    value,
-    description: '',
+function storedParamsToParamEntries(stored: HttpRequestData['params']): ParamEntry[] {
+  if (!stored) return [];
+  return stored.map((item: HttpParam) => ({
+    key: item.key,
+    value: item.value,
+    description: item.description ?? '',
     enabled: true,
   }));
 }
 
 /**
- * Convert ParamEntry[] back to Record<string,string> for execution.
- * Only enabled, non-empty entries are included.
+ * Convert ParamEntry[] to Array<HttpParam> for persistence and execution.
+ * Only enabled, non-empty key entries are included.
+ * Matches the schema: Array<{key: string, value: string, description?: string}>.
  */
-function paramEntriesToRecord(entries: ParamEntry[]): Record<string, string> {
-  const record: Record<string, string> = {};
-  for (const entry of entries) {
-    if (entry.enabled && entry.key.trim()) {
-      record[entry.key] = entry.value;
-    }
-  }
-  return record;
+function paramEntriesToArray(entries: ParamEntry[]): NonNullable<HttpRequestData['params']> {
+  return entries
+    .filter(entry => entry.enabled && entry.key.trim())
+    .map(entry => ({
+      key: entry.key,
+      value: entry.value,
+      ...(entry.description ? { description: entry.description } : {})
+    }));
 }
 
 function HttpParamsTab({ request, onChange, uiContext }: UITabProps) {
   const data = request.data as any;
 
-  // Read ParamEntry[] from transient _ui state; fall back to building from Record
+  // Read ParamEntry[] from transient _ui state; fall back to building from stored params array
   const params: ParamEntry[] = data?._ui?.paramsRows
     ? (data._ui.paramsRows as ParamEntry[])
-    : recordToParamEntries(data?.params);
+    : storedParamsToParamEntries(data?.params as HttpRequestData['params']);
 
   // Compute generated (auto) params from auth - apikey in query injects a param
   const generatedParams = React.useMemo((): GeneratedParamEntry[] => {
@@ -233,7 +237,7 @@ function HttpParamsTab({ request, onChange, uiContext }: UITabProps) {
       ...request,
       data: {
         ...data,
-        params: paramEntriesToRecord(newRows),
+        params: paramEntriesToArray(newRows),
         _ui: { ...(data?._ui ?? {}), paramsRows: newRows },
       },
     });
