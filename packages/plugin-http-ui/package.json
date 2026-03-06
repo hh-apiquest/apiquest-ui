@@ -1,6 +1,6 @@
 {
   "name": "@apiquest/plugin-http-ui",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "HTTP Protocol UI Plugin for ApiQuest Desktop",
   "license": "AGPL-3.0-or-later",
   "keywords": [
