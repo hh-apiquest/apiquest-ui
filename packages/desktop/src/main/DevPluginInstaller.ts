@@ -22,17 +22,27 @@ const WORKSPACE_UI_PLUGINS = [
   // UI plugins (desktop runtime)
   '@apiquest/plugin-http-ui',
   '@apiquest/plugin-auth-ui',
-  '@apiquest/plugin-sse-ui'
+  '@apiquest/plugin-sse-ui',
+  '@apiquest/plugin-soap-ui'
 ];
 
 const WORKSPACE_CORE_PLUGINS = [
   // Execution plugins (fracture runtime)
   '@apiquest/plugin-http',
   '@apiquest/plugin-auth',
+  '@apiquest/plugin-soap',
+  '@apiquest/plugin-sse',
 
   // Vault plugins (fracture runtime)
   '@apiquest/plugin-vault-file'
 ];
+
+const UI_PLUGIN_CORE_DEPENDENCIES: Record<string, string[]> = {
+  '@apiquest/plugin-http-ui': ['@apiquest/plugin-http'],
+  '@apiquest/plugin-auth-ui': ['@apiquest/plugin-auth'],
+  '@apiquest/plugin-soap-ui': ['@apiquest/plugin-soap'],
+  '@apiquest/plugin-sse-ui': ['@apiquest/plugin-sse'],
+};
 
 /**
  * Installs workspace plugins to appData/plugins in dev mode
@@ -117,13 +127,20 @@ export async function installWorkspacePlugins(): Promise<void> {
     }
   }
 
-  for (const pluginName of WORKSPACE_CORE_PLUGINS) {
-    // Core plugins (fracture runtime) are not managed by this installer for desktop use
-    // Skip disabled ones
-    if (disabledPlugins.has(pluginName)) {
-      console.log(`[DevInstaller] Skipping disabled core plugin: ${pluginName}`);
-      continue;
-    }
+  const enabledUiPlugins = WORKSPACE_UI_PLUGINS.filter((pluginName) => !disabledPlugins.has(pluginName));
+  const requiredCorePlugins = Array.from(
+    new Set(
+      enabledUiPlugins.flatMap((pluginName) => UI_PLUGIN_CORE_DEPENDENCIES[pluginName] ?? [])
+    )
+  ).filter((pluginName) => WORKSPACE_CORE_PLUGINS.includes(pluginName));
+
+  console.log('[DevInstaller] Core dependency planning:', {
+    enabledUiPlugins,
+    requiredCorePlugins,
+  });
+
+  for (const pluginName of requiredCorePlugins) {
+    // Core plugins (fracture runtime) are installed only when required by enabled UI plugins
 
     try {
       const folderName = pluginName.replace('@apiquest/', '');

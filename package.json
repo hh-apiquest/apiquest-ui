@@ -8,7 +8,13 @@
   ],
   "resolutions": {
     "@apiquest/types": "portal:../fracture/packages/types",
-    "@apiquest/fracture": "portal:../fracture/packages/fracture"
+    "@apiquest/fracture": "portal:../fracture/packages/fracture",
+    "@apiquest/plugin-auth": "portal:../fracture/packages/plugin-auth",
+    "@apiquest/plugin-graphql": "portal:../fracture/packages/plugin-graphql",
+    "@apiquest/plugin-http": "portal:../fracture/packages/plugin-http",
+    "@apiquest/plugin-soap": "portal:../fracture/packages/plugin-soap",
+    "@apiquest/plugin-sse": "portal:../fracture/packages/plugin-sse",
+    "@apiquest/plugin-vault-file": "portal:../fracture/packages/plugin-vault-file"
   },
   "scripts": {
     "build": "yarn workspace @apiquest/plugin-ui-types build && yarn workspaces foreach -A --include '@apiquest/plugin-*' run build",

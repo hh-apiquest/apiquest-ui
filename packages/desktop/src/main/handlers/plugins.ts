@@ -146,6 +146,65 @@ async function ensureToolsAvailable(): Promise<{ npm: string | null; git: string
   return { npm: cachedNpmVersion, git: cachedGitVersion };
 }
 
+async function listApiquestPackagesInNodeModules(pluginsDir: string): Promise<string[]> {
+  try {
+    const scopeDir = join(pluginsDir, 'node_modules', '@apiquest');
+    const entries = await readdir(scopeDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `@apiquest/${entry.name}`)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+async function listRuntimePluginFolders(pluginsDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(pluginsDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith('plugin-'))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+async function packageJsonExists(filePath: string): Promise<boolean> {
+  try {
+    await readFile(filePath, 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function promotePluginPackageToRuntimeFolder(pluginsDir: string, packageName: string): Promise<{ promoted: boolean; destination: string; reason?: string }> {
+  const sourcePath = join(pluginsDir, 'node_modules', packageName);
+  const shortName = packageName.split('/').pop() ?? packageName;
+  const destination = join(pluginsDir, shortName);
+
+  const sourcePackageJson = join(sourcePath, 'package.json');
+  const sourceExists = await packageJsonExists(sourcePackageJson);
+  if (!sourceExists) {
+    return {
+      promoted: false,
+      destination,
+      reason: `Package not found in node_modules: ${packageName}`,
+    };
+  }
+
+  const { cpSync, existsSync, rmSync } = await import('fs');
+
+  if (existsSync(destination)) {
+    rmSync(destination, { recursive: true, force: true });
+  }
+
+  cpSync(sourcePath, destination, { recursive: true });
+  return { promoted: true, destination };
+}
+
 export interface ScannedPlugin {
   name: string;
   version: string;
@@ -251,16 +310,42 @@ export function registerPluginsHandlers() {
     }
 
     try {
+      const startedAt = Date.now();
+      const resolvedNpmCli = getBundledNpmCli();
+
       console.log('[PluginHandler] Installing plugin:', packageName);
+      console.log('[PluginHandler] Install context:', {
+        packageName,
+        pluginsDir,
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        arch: process.arch,
+        npmMode: resolvedNpmCli ? 'bundled-cli' : 'system-npm-fallback',
+        npmCliPath: resolvedNpmCli
+      });
       
       // Ensure plugins directory exists
       await mkdir(pluginsDir, { recursive: true });
+
+      const beforeNodeModules = await listApiquestPackagesInNodeModules(pluginsDir);
+      const beforeRuntimeFolders = await listRuntimePluginFolders(pluginsDir);
+      console.log('[PluginHandler] Install pre-state:', {
+        beforeNodeModules,
+        beforeRuntimeFolders
+      });
       
       // Use bundled npm (via Electron's Node.js) to install the package
       const { stdout, stderr } = await runNpm(
         ['install', packageName, '--prefix', pluginsDir, '--no-save', '--legacy-peer-deps'],
         { maxBuffer: 1024 * 1024 * 10 }
       );
+
+      console.log('[PluginHandler] npm install completed:', {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        stdoutLength: stdout?.length ?? 0,
+        stderrLength: stderr?.length ?? 0
+      });
       
       if (stderr && !stderr.includes('npm WARN')) {
         console.error('[PluginHandler] Install stderr:', stderr);
@@ -274,25 +359,82 @@ export function registerPluginsHandlers() {
       const packagePath = join(pluginsDir, 'node_modules', packageName, 'package.json');
       
       try {
-        await readFile(packagePath, 'utf-8');
-        console.log('[PluginHandler] Plugin installed successfully:', packageName);
-        
-        // Move plugin from node_modules to plugins directory
-        const sourcePath = join(pluginsDir, 'node_modules', packageName);
-        const destPath = join(pluginsDir, shortName);
-        
-        // Use npm to copy (instead of move to preserve node_modules)
-        const { cpSync, existsSync, rmSync } = await import('fs');
-        
-        // Remove destination if exists
-        if (existsSync(destPath)) {
-          rmSync(destPath, { recursive: true, force: true });
-        }
-        
-        // Copy plugin files
-        cpSync(sourcePath, destPath, { recursive: true });
+        const installedPackageJson = await readFile(packagePath, 'utf-8');
+        const installedPackage = JSON.parse(installedPackageJson) as {
+          name?: string;
+          version?: string;
+          dependencies?: Record<string, string>;
+          peerDependencies?: Record<string, string>;
+        };
 
-        console.log('[PluginHandler] Plugin copied to:', destPath);
+        const pluginDependencies = Object.keys(installedPackage.dependencies ?? {})
+          .filter((dep) => dep.startsWith('@apiquest/plugin-'))
+          .sort((a, b) => a.localeCompare(b));
+
+        const pluginPeerDependencies = Object.keys(installedPackage.peerDependencies ?? {})
+          .filter((dep) => dep.startsWith('@apiquest/plugin-'))
+          .sort((a, b) => a.localeCompare(b));
+
+        console.log('[PluginHandler] Plugin installed successfully:', packageName);
+        console.log('[PluginHandler] Installed package metadata:', {
+          name: installedPackage.name,
+          version: installedPackage.version,
+          pluginDependencies,
+          pluginPeerDependencies
+        });
+        
+        const promotedPackages: Array<{ packageName: string; destination: string }> = [];
+        const failedPromotions: Array<{ packageName: string; reason: string }> = [];
+
+        const rootPromotion = await promotePluginPackageToRuntimeFolder(pluginsDir, packageName);
+        if (rootPromotion.promoted) {
+          promotedPackages.push({ packageName, destination: rootPromotion.destination });
+          console.log('[PluginHandler] Plugin copied to:', rootPromotion.destination);
+        } else {
+          failedPromotions.push({ packageName, reason: rootPromotion.reason ?? 'Unknown promotion error' });
+        }
+
+        // Promote direct @apiquest/plugin-* dependencies (fracture/runtime plugins) into
+        // runtime plugin folders so request execution works in packaged app without dev installer.
+        for (const dependencyName of pluginDependencies) {
+          const dependencyPromotion = await promotePluginPackageToRuntimeFolder(pluginsDir, dependencyName);
+          if (dependencyPromotion.promoted) {
+            promotedPackages.push({ packageName: dependencyName, destination: dependencyPromotion.destination });
+          } else {
+            failedPromotions.push({
+              packageName: dependencyName,
+              reason: dependencyPromotion.reason ?? 'Unknown promotion error',
+            });
+          }
+        }
+
+        if (failedPromotions.length > 0) {
+          console.warn('[PluginHandler] Some plugin packages were not promoted to runtime folders:', failedPromotions);
+        }
+
+        const dependencyVisibility = await Promise.all(
+          pluginDependencies.map(async (dependencyName) => {
+            const dependencyNodeModulesPkg = join(pluginsDir, 'node_modules', dependencyName, 'package.json');
+            const dependencyRuntimePkg = join(pluginsDir, dependencyName.split('/').pop() ?? dependencyName, 'package.json');
+
+            return {
+              dependencyName,
+              inNodeModules: await packageJsonExists(dependencyNodeModulesPkg),
+              inRuntimePluginsDir: await packageJsonExists(dependencyRuntimePkg)
+            };
+          })
+        );
+
+        const afterNodeModules = await listApiquestPackagesInNodeModules(pluginsDir);
+        const afterRuntimeFolders = await listRuntimePluginFolders(pluginsDir);
+        console.log('[PluginHandler] Install post-state:', {
+          packageName,
+          promotedPackages,
+          failedPromotions,
+          dependencyVisibility,
+          afterNodeModules,
+          afterRuntimeFolders
+        });
 
         // Enable plugin in settings (marks it as explicitly enabled so dev installer includes it)
         try {

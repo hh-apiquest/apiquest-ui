@@ -19,6 +19,7 @@ const __dirname = path.dirname(__filename);
 const APP_ID = 'com.apiquest.desktop';
 const IS_WINDOWS = process.platform === 'win32';
 const IS_LINUX = process.platform === 'linux';
+const IS_MAC = process.platform === 'darwin';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -45,8 +46,8 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 600,
-    frame: false,
-    titleBarStyle: 'hidden',
+    frame: IS_MAC,
+    titleBarStyle: IS_MAC ? 'hiddenInset' : 'hidden',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
