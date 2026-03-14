@@ -2,7 +2,13 @@ import React from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import BlackboardTheme from '../themes/Blackboard.json';
 import * as RadixThemes from '@radix-ui/themes';
-import type { PluginUIContext, VariableResolverService, ScriptIntellisenseContext, ScriptIntellisense } from '@apiquest/plugin-ui-types';
+import type {
+  PluginUIContext,
+  VariableResolverService,
+  PluginHostBridge,
+  ScriptIntellisenseContext,
+  ScriptIntellisense
+} from '@apiquest/plugin-ui-types';
 import { pluginManagerService } from './PluginManagerService';
 import { ScriptIntellisenseManager } from './ScriptIntellisenseManager';
 
@@ -14,13 +20,8 @@ import {
   UrlEncodedEditor
 } from '../components/editors';
 
-/**
- * Dummy Variable Resolver Service
- * TODO: Implement actual variable resolution
- */
 class DummyVariableResolverService implements VariableResolverService {
   resolve(text: string, variables: Record<string, string>): string {
-    // Simple {{variable}} replacement
     return text.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
       return variables[varName] || match;
     });
@@ -29,10 +30,10 @@ class DummyVariableResolverService implements VariableResolverService {
 
 /**
  * PluginLoaderService
- * Creates UI context and injects it into plugins from PluginManagerService
+ * Creates per-plugin UI contexts and injects them into every registered plugin.
+ * Each plugin receives its own context instance with a host bridge scoped to its npm package name.
  */
 class PluginLoaderService {
-  private uiContext: PluginUIContext | null = null;
   private currentTheme: 'light' | 'dark' = 'light';
   private isBlackboardThemeLoaded = false;
   private intellisenseManager = new ScriptIntellisenseManager();
@@ -42,9 +43,6 @@ class PluginLoaderService {
     this.loadMonacoThemes();
   }
   
-  /**
-   * Load custom Monaco themes and initialize IntelliSense base libs
-   */
   private async loadMonacoThemes() {
     try {
       const monaco = await loader.init();
@@ -55,48 +53,36 @@ class PluginLoaderService {
       console.error('[PluginLoader] Failed to load Monaco themes:', error);
     }
 
-    // Initialize IntelliSense manager after Monaco is ready
     this.intellisenseManager.initialize().catch((error) => {
       console.error('[PluginLoader] IntelliSense manager failed to initialize:', error);
     });
   }
   
   /**
-   * Initialize: create UI context and inject into all plugins
+   * Initialize: inject per-plugin contexts into all loaded plugins.
    */
   initialize(theme: 'light' | 'dark' = 'light') {
     this.currentTheme = theme;
-    this.uiContext = this.createUIContext();
-    
-    // Inject UI context into all loaded plugins
     this.injectUIContext();
-    
-    console.log('[PluginLoader] UI context injected into plugins');
+    console.log('[PluginLoader] Per-plugin UI contexts injected');
   }
   
   /**
-   * Create UI context with all dependencies
+   * Create a UI context scoped to the given npm package name.
+   * The host bridge on this context dispatches to handlers registered by that plugin's
+   * hostBundle. packageName must be the full npm package name (e.g. '@apiquest/plugin-soap-ui').
    */
-  private createUIContext(): PluginUIContext {
+  createUIContext(packageName: string): PluginUIContext {
     const MonacoEditor = (props: any) => {
       const { value, language, onChange, height, theme, readonly, ...otherProps } = props;
 
-      console.log('[Monaco] Wrapper called:', {
-        propsTheme: theme,
-        currentTheme: this.currentTheme,
-        uiContextTheme: this.uiContext?.theme
-      });
-
-      // Use props.theme if provided (from uiState), otherwise fall back
-      const effectiveTheme = theme || this.uiContext?.theme || this.currentTheme;
-      const editorTheme = effectiveTheme === 'dark' 
+      const effectiveTheme = theme || this.currentTheme;
+      const editorTheme = effectiveTheme === 'dark'
         ? (this.isBlackboardThemeLoaded ? 'blackboard' : 'vs-dark')
         : 'vs-light';
       
-      console.log('[Monaco] Computed editorTheme:', editorTheme);
-      
       return React.createElement(Editor, {
-        key: effectiveTheme, // Force re-mount on theme change
+        key: effectiveTheme,
         value,
         language: language || 'javascript',
         onChange,
@@ -109,18 +95,40 @@ class PluginLoaderService {
           scrollBeyondLastLine: false,
           automaticLayout: true,
           tabSize: 2,
-          readOnly: readonly ?? false  // Support readonly prop
+          readOnly: readonly ?? false
         },
         ...otherProps
       });
     };
     
     const variableResolverService = new DummyVariableResolverService();
+
+    const aiService = {
+      isConfigured: async () => window.quest.ai.isConfigured(),
+      complete: async (request: Parameters<typeof window.quest.ai.complete>[0]) =>
+        window.quest.ai.complete(request)
+    };
+
+    const host: PluginHostBridge = {
+      showOpenDialog: (options) =>
+        window.quest.host.showOpenDialog(packageName, options),
+
+      readFile: (path) =>
+        window.quest.host.readFile(packageName, path),
+
+      fetchText: (url, options) =>
+        window.quest.host.fetchText(packageName, url, options),
+
+      invoke: <T = unknown>(action: string, payload?: unknown) =>
+        window.quest.host.invoke<T>(packageName, action, payload),
+    };
     
     return {
       React,
       Monaco: { Editor: MonacoEditor },
       variableResolver: variableResolverService,
+      ai: aiService,
+      host,
       Editors: {
         Headers: HeadersEditor,
         Params: ParamsEditor,
@@ -133,41 +141,52 @@ class PluginLoaderService {
   }
   
   /**
-   * Inject UI context into all plugins from PluginManagerService
+   * Inject per-plugin scoped UI contexts into all plugins from PluginManagerService.
+   * Each plugin type uses its npm package name as the host bridge scope key.
    */
   private injectUIContext() {
-    if (!this.uiContext) {
-      throw new Error('UI context not created');
-    }
-    
-    // Get all plugins from manager and call setup()
-    pluginManagerService.getAllProtocolPlugins().forEach(plugin => {
-      plugin.setup(this.uiContext!);
-      console.log(`[PluginLoader] Injected UI context into protocol: ${plugin.protocol}`);
+    // Protocol plugins — use getAllProtocolPluginEntries() for packageName
+    pluginManagerService.getAllProtocolPluginEntries().forEach(({ packageName, plugin }) => {
+      plugin.setup(this.createUIContext(packageName));
+      console.log(`[PluginLoader] Injected context into protocol plugin: ${packageName}`);
     });
     
-    pluginManagerService.getAllAuthPlugins().forEach(plugin => {
-      plugin.setup(this.uiContext!);
-      console.log(`[PluginLoader] Injected UI context into auth: ${plugin.type}`);
+    // Auth plugins — use getAllAuthPluginEntries() for packageName
+    pluginManagerService.getAllAuthPluginEntries().forEach(({ packageName, plugin }) => {
+      plugin.setup(this.createUIContext(packageName));
+      console.log(`[PluginLoader] Injected context into auth plugin: ${packageName}`);
+    });
+
+    // Importer plugins — map key IS the packageName
+    pluginManagerService.getAllImporterPluginEntries().forEach(({ packageName, plugin }) => {
+      plugin.setup(this.createUIContext(packageName));
+      console.log(`[PluginLoader] Injected context into importer plugin: ${packageName}`);
     });
     
-    // Listen for new plugins being registered and auto-setup
+    // Listen for new plugins and auto-setup with scoped context
     pluginManagerService.on('protocolPluginRegistered', (plugin: any) => {
-      if (this.uiContext) {
-        plugin.setup(this.uiContext);
-        console.log(`[PluginLoader] Auto-setup protocol plugin: ${plugin.protocol}`);
-      }
+      const packageName = pluginManagerService.getPackageNameForProtocol(plugin.protocol) ?? plugin.protocol;
+      plugin.setup(this.createUIContext(packageName));
+      console.log(`[PluginLoader] Auto-setup protocol plugin: ${packageName}`);
     });
     
     pluginManagerService.on('authPluginRegistered', (plugin: any) => {
-      if (this.uiContext) {
-        plugin.setup(this.uiContext);
-        console.log(`[PluginLoader] Auto-setup auth plugin: ${plugin.type}`);
-      }
+      const packageName = pluginManagerService.getPackageNameForAuthType(plugin.type) ?? plugin.type;
+      plugin.setup(this.createUIContext(packageName));
+      console.log(`[PluginLoader] Auto-setup auth plugin: ${packageName}`);
     });
 
-    // After a full plugin reload, re-apply the current IntelliSense context so
-    // contributions from newly loaded plugins take effect immediately.
+    pluginManagerService.on('importerPluginRegistered', (plugin: any, packageName?: string) => {
+      // importerPluginRegistered is emitted from registerImporterPlugin(packageName, plugin)
+      // The packageName is available from the importer entries map
+      const allEntries = pluginManagerService.getAllImporterPluginEntries();
+      const entry = allEntries.find(e => e.plugin === plugin);
+      const resolvedPackageName = entry?.packageName ?? packageName ?? 'unknown';
+      plugin.setup(this.createUIContext(resolvedPackageName));
+      console.log(`[PluginLoader] Auto-setup importer plugin: ${resolvedPackageName}`);
+    });
+
+    // After a full plugin reload, re-apply the current IntelliSense context
     pluginManagerService.on('pluginsReloaded', () => {
       if (this.currentContext !== null) {
         console.log('[PluginLoader] Plugins reloaded — refreshing IntelliSense context');
@@ -177,23 +196,11 @@ class PluginLoaderService {
   }
   
   /**
-   * Get UI context for passing to plugin components
-   */
-  getUIContext(): PluginUIContext {
-    if (!this.uiContext) {
-      throw new Error('PluginLoaderService not initialized');
-    }
-    return this.uiContext;
-  }
-  
-  /**
    * Set the active script editor context and apply protocol-specific IntelliSense.
-   * Called by script tab editors when the user switches script type or protocol.
    */
   setActiveScriptIntellisenseContext(context: ScriptIntellisenseContext): void {
     this.currentContext = context;
 
-    // Get the protocol plugin UI for the active protocol
     const protocolPlugin = pluginManagerService.getProtocolPlugin(context.protocol);
     const contributions: ScriptIntellisense[] = [];
     let canEventHaveTests = false;
@@ -226,24 +233,35 @@ class PluginLoaderService {
   }
 
   /**
-   * Update theme - just update the existing context, don't reinitialize
+   * Get a UI context scoped to the given protocol's npm package name.
+   * Used by desktop renderer components (RequestEditor, CollectionEditor, ConsolePanel, Runner, etc.)
+   * to construct the uiContext passed into plugin tab component props (UITabProps).
+   * When protocol is provided and registered, the context's host bridge dispatches to that
+   * plugin's handlers. When omitted, the host bridge is unscoped (host.invoke will throw at
+   * dispatch time, which is acceptable for generic desktop rendering callers).
+   */
+  getUIContext(protocol?: string): PluginUIContext {
+    if (protocol) {
+      const packageName = pluginManagerService.getPackageNameForProtocol(protocol);
+      if (packageName) {
+        return this.createUIContext(packageName);
+      }
+    }
+    return this.createUIContext('');
+  }
+
+  /**
+   * Update theme — propagates to newly created contexts.
+   * Existing plugin contexts that captured theme at setup time will not auto-update;
+   * a plugin reload is needed for theme-sensitive plugin UI to pick up the change.
    */
   setTheme(theme: 'light' | 'dark') {
-    console.log(`[PluginLoader] setTheme called: ${this.currentTheme} to ${theme}`);
-    if (this.currentTheme === theme) {
-      console.log('[PluginLoader] Theme unchanged, skipping');
-      return;
-    }
+    if (this.currentTheme === theme) return;
+    console.log(`[PluginLoader] Theme updated: ${this.currentTheme} -> ${theme}`);
     this.currentTheme = theme;
-    
-    // Update theme in existing context - DON'T reinitialize
-    if (this.uiContext) {
-      console.log('[PluginLoader] Updating theme in existing context to:', theme);
-      this.uiContext.theme = theme;
-    }
   }
   
-  // Delegate all plugin queries to PluginManagerService
+  // Plugin queries delegate to PluginManagerService
   getProtocolPluginUI(protocol: string) {
     return pluginManagerService.getProtocolPlugin(protocol);
   }
@@ -261,7 +279,6 @@ class PluginLoaderService {
   }
   
   getAuthPluginUIsForProtocol(protocol: string) {
-    // Filter by protocol's supported auth types from metadata
     const supportedAuthTypes = pluginManagerService.getSupportedAuthTypesForProtocol(protocol);
     return pluginManagerService.getAllAuthPlugins().filter(
       auth => supportedAuthTypes.includes(auth.type)

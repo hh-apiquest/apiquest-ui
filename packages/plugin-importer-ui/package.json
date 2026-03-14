@@ -1,14 +1,17 @@
 {
-  "name": "@apiquest/plugin-soap-ui",
-  "version": "1.0.0",
-  "description": "SOAP Protocol UI Plugin for ApiQuest Desktop",
+  "name": "@apiquest/plugin-importer-ui",
+  "version": "0.1.0",
+  "description": "Importer UI Plugin for ApiQuest Desktop (Postman, Insomnia, OpenAPI)",
   "license": "AGPL-3.0-or-later",
   "keywords": [
     "apiquest",
     "plugin",
-    "soap",
+    "importer",
     "desktop",
-    "ui"
+    "ui",
+    "postman",
+    "insomnia",
+    "openapi"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -20,38 +23,26 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "vite build --watch"
   },
-  "exports": {
-    ".": "./dist/index.js"
-  },
   "apiquest": {
-    "type": "protocol-ui",
+    "type": "importer-ui",
     "runtime": [
       "desktop"
     ],
     "hostBundle": "dist/host-bundle.cjs",
     "capabilities": {
       "provides": {
-        "protocols": [
-          "soap"
+        "importFormats": [
+          "postman-v2.1",
+          "insomnia-json",
+          "openapi-3.0",
+          "openapi-3.1"
         ]
-      },
-      "supports": {
-        "authTypes": [
-          "bearer",
-          "basic",
-          "oauth2",
-          "apikey"
-        ],
-        "strictAuthList": false
       }
     }
   },
-  "dependencies": {
-    "@apiquest/plugin-soap": "workspace:*"
-  },
   "peerDependencies": {
-    "@heroicons/react": "^2",
-    "@radix-ui/colors": "^3",
+    "@apiquest/plugin-ui-types": "workspace:*",
+    "@apiquest/types": "^1.1.0",
     "@radix-ui/themes": "^3",
     "react": "^18",
     "react-dom": "^18"

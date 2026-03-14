@@ -4,6 +4,8 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { useScreenMode } from '../../contexts';
 import { PluginManager } from '../plugins/PluginManager';
 import { ToolsSettings } from './ToolsSettings';
+import { ImporterSettings } from './ImporterSettings';
+import { AISettings } from './AISettings';
 
 export function SettingsPanel() {
   const { setMode, settingsInitialTab } = useScreenMode();
@@ -64,6 +66,18 @@ export function SettingsPanel() {
             Plugins
           </Tabs.Trigger>
           <Tabs.Trigger
+            value="importers"
+            className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
+          >
+            Importers
+          </Tabs.Trigger>
+          <Tabs.Trigger
+            value="ai"
+            className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
+          >
+            AI
+          </Tabs.Trigger>
+          <Tabs.Trigger
             value="tools"
             className="settings-tab-trigger px-4 py-3 text-sm font-medium cursor-pointer border-none bg-transparent text-left"
           >
@@ -94,6 +108,14 @@ export function SettingsPanel() {
 
           <Tabs.Content value="plugins" className="h-full overflow-hidden">
             <PluginManager />
+          </Tabs.Content>
+
+          <Tabs.Content value="importers" className="h-full overflow-auto p-6">
+            <ImporterSettings />
+          </Tabs.Content>
+
+          <Tabs.Content value="ai" className="h-full overflow-auto p-6">
+            <AISettings />
           </Tabs.Content>
 
           <Tabs.Content value="tools" className="h-full overflow-auto p-6">

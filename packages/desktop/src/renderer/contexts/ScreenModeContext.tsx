@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
 
 export type ScreenMode = 'request-editor' | 'workspace-manager' | 'settings';
-export type SettingsTab = 'general' | 'plugins' | 'tools' | 'appearance' | 'shortcuts';
+export type SettingsTab = 'general' | 'plugins' | 'importers' | 'ai' | 'tools' | 'appearance' | 'shortcuts';
 
 type ScreenModeContextType = {
   mode: ScreenMode;

@@ -5,13 +5,101 @@ import * as RT from '@radix-ui/themes';
 import type { WsdlService, WsdlPort, WsdlOperation, WsdlUIState } from './types.js';
 
 /**
+ * Minimal client-side WSDL parser.
+ * Extracts service/port/operation names from raw WSDL XML using the DOM parser.
+ * Returns an empty array for malformed or unsupported WSDL.
+ * A full WSDL parser (supporting all binding styles, SOAP 1.1/1.2, type schemas) will replace this.
+ */
+function parseWsdlXml(xml: string): WsdlService[] {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'text/xml');
+
+    if (doc.querySelector('parsererror')) {
+      console.warn('[WsdlTab] WSDL XML parse error');
+      return [];
+    }
+
+    const services: WsdlService[] = [];
+
+    // Extract wsdl:service elements (namespace-agnostic querySelector)
+    const serviceEls = Array.from(doc.querySelectorAll('service'));
+    for (const svcEl of serviceEls) {
+      const svcName = svcEl.getAttribute('name') ?? 'unknown';
+      const ports: WsdlPort[] = [];
+
+      const portEls = Array.from(svcEl.querySelectorAll('port'));
+      for (const portEl of portEls) {
+        const portName = portEl.getAttribute('name') ?? 'unknown';
+        const bindingRef = portEl.getAttribute('binding') ?? '';
+
+        // Strip namespace prefix (e.g. "tns:MyBinding" -> "MyBinding")
+        const localBinding = bindingRef.includes(':') ? bindingRef.split(':')[1] : bindingRef;
+        const bindingEl = doc.querySelector(`binding[name="${localBinding}"]`);
+
+        let soapVersion: '1.1' | '1.2' | 'unknown' = 'unknown';
+        if (bindingEl) {
+          // Heuristic: check child element local names for soap:binding or soap12:binding
+          const bindingChildren = Array.from(bindingEl.children);
+          for (const child of bindingChildren) {
+            const lname = child.localName;
+            const ns = child.namespaceURI ?? '';
+            if (lname === 'binding') {
+              if (ns.includes('soap12') || ns.includes('soap/1.2')) {
+                soapVersion = '1.2';
+              } else if (ns.includes('soap') || ns.includes('soap/1.1')) {
+                soapVersion = '1.1';
+              }
+            }
+          }
+        }
+
+        const operations: WsdlOperation[] = [];
+        if (bindingEl) {
+          const opEls = Array.from(bindingEl.querySelectorAll('operation'));
+          for (const opEl of opEls) {
+            const opName = opEl.getAttribute('name') ?? 'unknown';
+            // Find the soap:operation child for SOAPAction
+            const soapOpChildren = Array.from(opEl.children);
+            let soapAction = '';
+            for (const child of soapOpChildren) {
+              if (child.localName === 'operation') {
+                soapAction =
+                  child.getAttribute('soapAction') ??
+                  child.getAttribute('soap:soapAction') ??
+                  '';
+                break;
+              }
+            }
+            operations.push({
+              name: opName,
+              soapAction,
+              soapVersion,
+              inputSchema: [], // populated by a full parser in a follow-up
+            });
+          }
+        }
+
+        ports.push({ name: portName, operations });
+      }
+
+      services.push({ name: svcName, ports });
+    }
+
+    return services;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * WsdlTab — WSDL URL entry, Load button, service/port/operation selectors,
  * and binding-aware SOAP version display.
  *
  * Persists to request.data: wsdl, service, port, operation, soapVersion, soapAction.
  * Transient WSDL tree stored in request.data._ui.wsdlState (not persisted to file).
  */
-export function WsdlTab({ request, onChange }: UITabProps) {
+export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
   const data = request.data as unknown as SoapRequestData & { _ui?: { wsdlState?: WsdlUIState } };
   const wsdlState: WsdlUIState = data._ui?.wsdlState ?? {};
 
@@ -63,28 +151,70 @@ export function WsdlTab({ request, onChange }: UITabProps) {
     const loc = wsdlUrl.trim();
     if (!loc) return;
 
-    // Mark loading, clear prior error/services
     patchWsdlState({ loading: true, error: undefined, services: [] });
 
     try {
-      // IPC call to main process
-      const electronAPI = (window as any).quest as {
-        soap?: { loadWsdl: (location: string) => Promise<{ services: WsdlService[] }> };
-      };
-
-      if (!electronAPI?.soap?.loadWsdl) {
-        throw new Error('SOAP IPC bridge not available. Please ensure the desktop is running with SOAP support.');
+      if (!uiContext.host) {
+        throw new Error('Host bridge not available. This plugin requires desktop v1.x or later.');
       }
 
-      const result = await electronAPI.soap.loadWsdl(loc);
-      const loadedServices = result.services ?? [];
+      // Invoke the loadWsdl handler registered in plugin-soap-ui/dist/host-bundle.cjs.
+      // Returns { xml: string } — raw WSDL XML. Parse it client-side.
+      const result = await uiContext.host.invoke<{ xml: string }>('loadWsdl', { location: loc });
 
-      // Persist services tree to transient state, reset selections if services changed
+      // Parse the returned XML into the WsdlService tree
+      const loadedServices = parseWsdlXml(result.xml);
+
       onChange({
         ...request,
         data: {
           ...data,
-          // Clear service/port/operation/soapAction if WSDL changed
+          service: undefined,
+          port: undefined,
+          operation: undefined,
+          soapAction: undefined,
+          _ui: {
+            ...(data._ui ?? {}),
+            wsdlState: { loading: false, error: undefined, services: loadedServices },
+          },
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      patchWsdlState({ loading: false, error: msg, services: [] });
+    }
+  }
+
+  async function handlePickWsdlFile() {
+    if (!uiContext.host) return;
+
+    // 1. Show file picker — host grants the path and returns it allowlisted
+    const paths = await uiContext.host.showOpenDialog({
+      kind: 'file',
+      title: 'Select WSDL File',
+      filters: [
+        { name: 'WSDL / XML', extensions: ['wsdl', 'xml'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (!paths || paths.length === 0) return;
+
+    const filePath = paths[0];
+    // Show the selected path in the URL field and trigger load
+    patchData({ wsdl: filePath });
+    patchWsdlState({ loading: true, error: undefined, services: [] });
+
+    try {
+      // 2. Invoke loadWsdl — path is already in the allowlist from step 1
+      const result = await uiContext.host.invoke<{ xml: string }>('loadWsdl', { location: filePath });
+      const loadedServices = parseWsdlXml(result.xml);
+
+      onChange({
+        ...request,
+        data: {
+          ...data,
+          wsdl: filePath,
           service: undefined,
           port: undefined,
           operation: undefined,
@@ -164,6 +294,16 @@ export function WsdlTab({ request, onChange }: UITabProps) {
             size="2"
             style={{ flex: 1 }}
           />
+          {uiContext.host && (
+            <RT.Button
+              size="2"
+              variant="outline"
+              onClick={handlePickWsdlFile}
+              disabled={loading}
+            >
+              Browse
+            </RT.Button>
+          )}
           <RT.Button
             size="2"
             variant="solid"

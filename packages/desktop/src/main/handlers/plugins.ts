@@ -10,6 +10,7 @@ import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
 import { registerPluginProtocol } from '../protocols/plugin-protocol.js';
 import { settingsService } from '../SettingsService.js';
 import { installWorkspacePlugins } from '../DevPluginInstaller.js';
+import { loadPluginHostBundle, clearPluginHostBundle } from './host.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -289,6 +290,17 @@ export function registerPluginsHandlers() {
       }
       
       console.log(`[PluginHandler] Scan complete: ${plugins.length} desktop plugins found`);
+
+      // Load hostBundle sandboxes for enabled plugins that declare one.
+      // This runs eagerly at scan time so handler registrations are ready
+      // before any renderer invoke calls arrive.
+      for (const scanned of plugins) {
+        if (scanned.enabled && scanned.metadata.hostBundle) {
+          const shortName = scanned.name.split('/').pop() ?? scanned.name;
+          const bundlePath = join(pluginsDir, shortName, scanned.metadata.hostBundle);
+          await loadPluginHostBundle(scanned.name, bundlePath);
+        }
+      }
     } catch (err) {
       console.error('[PluginHandler] Failed to scan plugins folder:', err);
     }
@@ -484,6 +496,9 @@ export function registerPluginsHandlers() {
       } else {
         console.warn('[PluginHandler] Plugin folder not found:', pluginPath);
       }
+
+      // Clear host bridge state (handler registrations + path grants) for this plugin
+      clearPluginHostBundle(pluginName);
 
       // Persist as disabled in settings so dev-mode reinstaller skips it
       try {

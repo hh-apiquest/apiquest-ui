@@ -1,6 +1,24 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
 
+type AICompletionRequest = {
+  prompt: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  metadata?: Record<string, unknown>;
+};
+
+type AICompletionResponse = {
+  text: string;
+  model?: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+};
+
 const api = {
   // Workspace operations
   workspace: {
@@ -51,8 +69,16 @@ const api = {
     updateCollectionVariables: (workspaceId: string, collectionId: string, variables: any) =>
       ipcRenderer.invoke('workspace:updateCollectionVariables', workspaceId, collectionId, variables),
     
-    importCollection: (workspaceId: string) =>
-      ipcRenderer.invoke('workspace:importCollection', workspaceId),
+    importCollection: (
+      workspaceId: string,
+      params?: {
+        pluginPackageName: string;
+        format: string;
+        fileExtensions: string[];
+        sourceKind: 'file' | 'directory';
+      }
+    ) =>
+      ipcRenderer.invoke('workspace:importCollection', workspaceId, params),
     
     exportCollection: (workspaceId: string, collectionId: string) =>
       ipcRenderer.invoke('workspace:exportCollection', workspaceId, collectionId),
@@ -167,6 +193,36 @@ const api = {
       ipcRenderer.invoke('plugins:install', packageNameOrUrl),
     remove: (pluginName: string) => ipcRenderer.invoke('plugins:remove', pluginName),
     searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all') => ipcRenderer.invoke('plugins:searchMarketplace', query, type),
+  },
+
+  ai: {
+    isConfigured: (): Promise<boolean> => ipcRenderer.invoke('ai:isConfigured'),
+    complete: (request: AICompletionRequest): Promise<AICompletionResponse> => ipcRenderer.invoke('ai:complete', request),
+  },
+
+  /**
+   * Plugin host bridge — generic relay for all plugin types.
+   * Each method receives the plugin's npm package name as the first argument.
+   * The main process uses it to scope file grants and handler dispatch.
+   */
+  host: {
+    showOpenDialog: (packageName: string, options: {
+      kind?: 'file' | 'directory';
+      title?: string;
+      buttonLabel?: string;
+      filters?: Array<{ name: string; extensions: string[] }>;
+      multiSelections?: boolean;
+    }): Promise<string[] | null> =>
+      ipcRenderer.invoke('host:showOpenDialog', packageName, options),
+
+    readFile: (packageName: string, filePath: string): Promise<string> =>
+      ipcRenderer.invoke('host:readFile', packageName, filePath),
+
+    fetchText: (packageName: string, url: string, options?: { headers?: Record<string, string> }): Promise<string> =>
+      ipcRenderer.invoke('host:fetchText', packageName, url, options),
+
+    invoke: <T = unknown>(packageName: string, action: string, payload?: unknown): Promise<T> =>
+      ipcRenderer.invoke('host:invoke', packageName, action, payload),
   },
 };
 

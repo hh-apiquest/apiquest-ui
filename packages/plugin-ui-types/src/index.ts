@@ -14,6 +14,40 @@ export interface VariableResolverService {
 }
 
 /**
+ * AI completion request payload sent through desktop-managed AI service.
+ * Plugins never receive API keys directly.
+ */
+export interface AICompletionRequest {
+  prompt: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * AI completion response returned by desktop-managed AI service.
+ */
+export interface AICompletionResponse {
+  text: string;
+  model?: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+}
+
+/**
+ * AI service exposed by desktop to plugins.
+ * Uses global app settings and keeps provider credentials in main process.
+ */
+export interface AIService {
+  isConfigured(): Promise<boolean>;
+  complete(request: AICompletionRequest): Promise<AICompletionResponse>;
+}
+
+/**
  * A single user-editable header/param entry with enabled state.
  * This is the persisted model for headers and params - using an array
  * preserves insertion order, disabled state, and allows duplicate keys.
@@ -111,6 +145,108 @@ export interface ReactiveUIState {
 }
 
 /**
+ * Options for the native OS dialog shown by host.showOpenDialog.
+ * Supports both file and directory pickers.
+ */
+export interface PluginOpenDialogOptions {
+  /**
+   * Whether to show a file picker or a folder picker.
+   * Defaults to 'file' when omitted.
+   * Use 'directory' for formats like Bruno that import from a folder.
+   */
+  kind?: 'file' | 'directory';
+  title?: string;
+  buttonLabel?: string;
+  /**
+   * File extension filters — relevant only when kind === 'file'.
+   * Example: [{ name: 'WSDL', extensions: ['wsdl', 'xml'] }]
+   */
+  filters?: Array<{ name: string; extensions: string[] }>;
+  /**
+   * Allow selecting multiple files or folders.
+   * Defaults to false.
+   */
+  multiSelections?: boolean;
+}
+
+/**
+ * A file or directory path the user explicitly granted the plugin access to via showOpenDialog.
+ * Only paths originating from a dialog call are accepted by host.readFile / host.readDir.
+ */
+export type GrantedPath = string;
+
+/**
+ * Host bridge injected into PluginUIContext as host?.
+ * All methods route through IPC to the Electron main process.
+ * Available to all plugin types that receive a PluginUIContext: protocol-ui, auth-ui,
+ * importer-ui, exporter-ui, extension-ui.
+ */
+export interface PluginHostBridge {
+  /**
+   * Show the native OS file or directory picker.
+   * Returns an array of granted paths, or null if the user cancelled.
+   * Returned paths are automatically allowlisted for subsequent readFile / readDir calls.
+   * Set options.kind === 'directory' to show a folder picker instead of a file picker.
+   */
+  showOpenDialog(options: PluginOpenDialogOptions): Promise<GrantedPath[] | null>;
+
+  /**
+   * Read a text file at a path previously returned by showOpenDialog (kind=file).
+   * Throws if the path was not granted by a prior showOpenDialog call in this session.
+   */
+  readFile(path: GrantedPath): Promise<string>;
+
+  /**
+   * Fetch a remote URL from the main process (no CORS restrictions, no renderer CSP).
+   * Restricted to http:// and https:// schemes only.
+   * Response body is capped at 5 MB.
+   */
+  fetchText(url: string, options?: { headers?: Record<string, string> }): Promise<string>;
+
+  /**
+   * Invoke a handler registered by this plugin's hostBundle module.
+   * The action string must match a handlers.on(action, ...) call in the bundle.
+   * Throws if no handler is registered for the action or if the main-process handler fails.
+   * Subject to a 30-second per-call timeout.
+   */
+  invoke<T = unknown>(action: string, payload?: unknown): Promise<T>;
+}
+
+/**
+ * Console interface available inside a plugin's hostBundle VM sandbox.
+ * Matches Node.js console levels that the desktop console panel records.
+ */
+export interface PluginSandboxConsole {
+  debug(...args: unknown[]): void;
+  log(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  trace(...args: unknown[]): void;
+}
+
+/**
+ * Full API injected as globals into a plugin's hostBundle VM sandbox.
+ * These identifiers are the only globals accessible in the bundle.
+ * Use this type to typecheck your hostBundle entry module during development.
+ */
+export interface PluginSandboxGlobals {
+  /** Register privileged action handlers callable from the renderer via host.invoke(). */
+  handlers: {
+    on(action: string, handler: (payload: unknown) => Promise<unknown>): void;
+  };
+  /** Privileged file I/O — only paths granted by the user's dialog are accepted. */
+  file: {
+    readText(filePath: string): Promise<string>;
+    readBase64(filePath: string): Promise<string>;
+  };
+  /** HTTP/HTTPS fetch from main process — no CORS, no renderer CSP. 5 MB cap. */
+  fetch(url: string, options?: { headers?: Record<string, string>; method?: string; body?: string }): Promise<string>;
+  /** Scoped console — all output is tagged with the plugin package name. */
+  console: PluginSandboxConsole;
+}
+
+/**
  * UI Context provided by desktop to plugins
  * Injected dependencies to keep plugin size small
  */
@@ -132,6 +268,18 @@ export interface PluginUIContext {
   
   // Variable resolver service
   variableResolver: VariableResolverService;
+
+  // Desktop-managed AI service (global settings, no plugin-level API key override)
+  ai: AIService;
+
+  /**
+   * Host bridge for privileged operations: file I/O, native dialogs, outbound fetch,
+   * and dispatch to this plugin's desktopMain module running in the main process.
+   * Optional during migration; will become required once all plugins are updated.
+   * Scoped to this plugin's npm package name — host.invoke dispatches only to
+   * handlers registered by this plugin's own desktopMain bundle.
+   */
+  host?: PluginHostBridge;
   
   // Reusable editor components from desktop
   Editors: {
@@ -470,7 +618,7 @@ export interface PluginMetadata {
  */
 export interface ApiquestMetadata {
   // Plugin type
-  type: 
+  type:
     // Fracture plugins (execution/CLI)
     | 'protocol'          // HTTP, GraphQL, gRPC execution
     | 'auth'              // Bearer, Basic, OAuth2 application
@@ -487,6 +635,22 @@ export interface ApiquestMetadata {
   
   // Runtime environment (array for explicitness)
   runtime: ('fracture' | 'desktop')[];
+
+  /**
+   * Optional path (relative to the plugin root) to a fully self-contained CJS bundle
+   * that the desktop host loads at scan time into an isolated vm.createContext sandbox
+   * running in the Electron main process.
+   *
+   * The loaded bundle registers privileged action handlers via the injected
+   * sandbox globals (handlers.on, file, fetch, console). These handlers are then
+   * reachable from the renderer-side PluginHostBridge.invoke() call.
+   *
+   * The bundle must be fully self-contained — all dependencies must be inlined by the
+   * bundler. No require() or dynamic import() calls are permitted after bundling.
+   *
+   * Naming convention: "dist/host-bundle.cjs"
+   */
+  hostBundle?: string;
   
   // Capabilities for discovery and dependency resolution
   capabilities?: {
@@ -608,16 +772,41 @@ export interface IImporterPluginUI {
   importFormats: string[];
   
   /**
-   * File extensions for each format (for file picker dialog)
-   * Maps format name to allowed extensions
-   * Example: { 'postman': ['.json'], 'openapi-3.0': ['.json', '.yaml', '.yml'] }
+   * Import source configuration per format.
+   * - kind=file: use file picker (extensions are required)
+   * - kind=directory: use folder picker (extensions ignored)
+   * Maps format name to source kind + allowed extensions.
+   * Example:
+   * {
+   *   'postman-v2.1': { kind: 'file', extensions: ['.json'] },
+   *   'openapi-3.0': { kind: 'file', extensions: ['.json', '.yaml', '.yml'] },
+   *   'bruno': { kind: 'directory', extensions: [] }
+   * }
    */
-  fileExtensions: Record<string, string[]>;
+  fileExtensions: Record<string, {
+    kind: 'file' | 'directory';
+    extensions: string[];
+  }>;
   
   /**
    * Initialize with UI dependencies from desktop
    */
   setup(uiContext: PluginUIContext): void;
+
+  /**
+   * Render plugin-specific settings section in Desktop Settings > Importers.
+   * Settings are persisted by desktop and passed back on each render.
+   */
+  renderSettings?(
+    pluginSettings: Record<string, unknown> | undefined,
+    onChange: (settings: Record<string, unknown> | undefined) => void,
+    uiContext: PluginUIContext
+  ): ReactNode;
+
+  /**
+   * Optional defaults for plugin-specific settings persisted by desktop.
+   */
+  getDefaultSettings?(): Record<string, unknown>;
   
   /**
    * Detect format from file content (before user selects format)
@@ -646,7 +835,10 @@ export interface IImporterPluginUI {
   importCollection(
     data: string | any,
     format: string,
-    options?: any
+    options?: {
+      pluginSettings?: Record<string, unknown>;
+      [key: string]: unknown;
+    }
   ): Promise<any>; // Returns Collection from @apiquest/types
   
   /**
@@ -671,11 +863,21 @@ export interface IExporterPluginUI {
   exportFormats: string[];
   
   /**
-   * File extensions for each format (for save file dialog)
-   * Maps format name to default extension
-   * Example: { 'postman': '.json', 'openapi-3.1': '.yaml', 'har': '.har' }
+   * Export target configuration per format.
+   * - kind=file: save to a single file (defaultExtension required)
+   * - kind=directory: export to a folder (defaultExtension ignored)
+   * Maps format name to target kind + default extension.
+   * Example:
+   * {
+   *   'postman-v2.1': { kind: 'file', defaultExtension: '.json' },
+   *   'openapi-3.1': { kind: 'file', defaultExtension: '.yaml' },
+   *   'bruno': { kind: 'directory', defaultExtension: '' }
+   * }
    */
-  fileExtensions: Record<string, string>;
+  fileExtensions: Record<string, {
+    kind: 'file' | 'directory';
+    defaultExtension: string;
+  }>;
   
   /**
    * Initialize with UI dependencies from desktop

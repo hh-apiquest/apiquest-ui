@@ -3,6 +3,7 @@
 import type { 
   IProtocolPluginUI,
   IAuthPluginUI,
+  IImporterPluginUI,
   ApiquestMetadata
 } from '@apiquest/plugin-ui-types';
 import type { InstalledPluginInfo } from '../types/plugin';
@@ -21,10 +22,23 @@ interface ScannedPlugin {
 export class PluginManagerService extends EventEmitter {
   private protocolPlugins: Map<string, IProtocolPluginUI> = new Map();
   private authPlugins: Map<string, IAuthPluginUI> = new Map();
+  private importerPlugins: Map<string, IImporterPluginUI> = new Map();
   private scannedPlugins: Map<string, ScannedPlugin> = new Map();
   private protocolMetadata: Map<string, ApiquestMetadata> = new Map();
   private authMetadata: Map<string, ApiquestMetadata> = new Map();
+  private importerMetadata: Map<string, ApiquestMetadata> = new Map();
   private pluginsLoaded: boolean = false;
+
+  // Reverse-lookup maps: natural identity key -> npm package name.
+  // Required so PluginLoaderService can pass the correct packageName to createUIContext()
+  // for every plugin type. Canonical for host bridge dispatch.
+  //
+  // Protocol plugins: key = protocol string (e.g. 'soap')
+  // Auth plugins: key = auth type string (e.g. 'bearer')
+  // Importer plugins: key = npm package name (already canonical — no separate map needed)
+  // Future exporter/visualizer/extension plugins follow the same pattern as importer.
+  private protocolPackageNames: Map<string, string> = new Map(); // protocol string -> npm package name
+  private authPackageNames: Map<string, string> = new Map();     // auth type string -> npm package name
 
   constructor() {
     super();
@@ -84,7 +98,7 @@ export class PluginManagerService extends EventEmitter {
       }
     }
     
-    console.log(`[PluginManager] Loaded ${this.protocolPlugins.size} protocol plugins, ${this.authPlugins.size} auth plugins`);
+    console.log(`[PluginManager] Loaded ${this.protocolPlugins.size} protocol plugins, ${this.authPlugins.size} auth plugins, ${this.importerPlugins.size} importer plugins`);
   }
 
   /**
@@ -110,17 +124,28 @@ export class PluginManagerService extends EventEmitter {
     
     if (type === 'protocol-ui') {
       const plugin = pluginModule.default;
-      this.registerProtocolPlugin(plugin);
+      this.registerProtocolPlugin(plugin, pkg.name);
       this.protocolMetadata.set(plugin.protocol, pkg.metadata);
-      console.log(`[PluginManager]   Protocol loaded: ${plugin.protocol}`);
+      console.log(`[PluginManager]   Protocol loaded: ${plugin.protocol} (package: ${pkg.name})`);
       
     } else if (type === 'auth-ui') {
       const plugins = Array.isArray(pluginModule.default) ? pluginModule.default : [pluginModule.default];
       
       plugins.forEach((authUI: IAuthPluginUI) => {
-        this.registerAuthPlugin(authUI);
+        this.registerAuthPlugin(authUI, pkg.name);
         this.authMetadata.set(authUI.type, pkg.metadata);
-        console.log(`[PluginManager]   Auth loaded: ${authUI.type}`);
+        console.log(`[PluginManager]   Auth loaded: ${authUI.type} (package: ${pkg.name})`);
+      });
+
+    } else if (type === 'importer-ui') {
+      const plugins = Array.isArray(pluginModule.default) ? pluginModule.default : [pluginModule.default];
+
+      plugins.forEach((importerUI: IImporterPluginUI) => {
+        // Canonical importer key is npm package name (unique in npm registry, including scope).
+        // No separate reverse-lookup needed — the key IS the package name already.
+        this.registerImporterPlugin(pkg.name, importerUI);
+        this.importerMetadata.set(pkg.name, pkg.metadata);
+        console.log(`[PluginManager]   Importer loaded: ${pkg.name}`);
       });
       
     } else {
@@ -156,20 +181,44 @@ export class PluginManagerService extends EventEmitter {
     console.log('[PluginManager] Reloading all plugins...');
     this.protocolPlugins.clear();
     this.authPlugins.clear();
+    this.importerPlugins.clear();
     this.scannedPlugins.clear();
+    this.protocolPackageNames.clear();
+    this.authPackageNames.clear();
     
     await this.loadPluginsFromFolder();
     this.emit('pluginsReloaded');
   }
 
-  registerProtocolPlugin(plugin: IProtocolPluginUI): void {
+  /**
+   * Register a protocol plugin and record its npm package name for host bridge scoping.
+   * packageName is the npm package name, e.g. '@apiquest/plugin-soap-ui'.
+   */
+  registerProtocolPlugin(plugin: IProtocolPluginUI, packageName: string): void {
     this.protocolPlugins.set(plugin.protocol, plugin);
+    this.protocolPackageNames.set(plugin.protocol, packageName);
     this.emit('protocolPluginRegistered', plugin);
   }
 
-  registerAuthPlugin(plugin: IAuthPluginUI): void {
+  /**
+   * Register an auth plugin and record its npm package name for host bridge scoping.
+   * packageName is the npm package name, e.g. '@apiquest/plugin-auth-ui'.
+   */
+  registerAuthPlugin(plugin: IAuthPluginUI, packageName: string): void {
     this.authPlugins.set(plugin.type, plugin);
+    this.authPackageNames.set(plugin.type, packageName);
     this.emit('authPluginRegistered', plugin);
+  }
+
+  /**
+   * Register an importer plugin.
+   * Canonical key is the npm package name — also the host bridge packageName.
+   * The event payload includes the plugin and the packageName so PluginLoaderService
+   * can build the correctly-scoped host bridge context on auto-setup.
+   */
+  registerImporterPlugin(packageName: string, plugin: IImporterPluginUI): void {
+    this.importerPlugins.set(packageName, plugin);
+    this.emit('importerPluginRegistered', plugin, packageName);
   }
 
   getProtocolPlugin(protocol: string): IProtocolPluginUI | undefined {
@@ -186,6 +235,89 @@ export class PluginManagerService extends EventEmitter {
 
   getAllAuthPlugins(): IAuthPluginUI[] {
     return Array.from(this.authPlugins.values());
+  }
+
+  getImporterPlugin(id: string): IImporterPluginUI | undefined {
+    return this.importerPlugins.get(id);
+  }
+
+  getAllImporterPlugins(): IImporterPluginUI[] {
+    return Array.from(this.importerPlugins.values());
+  }
+
+  getAllImporterPluginEntries(): Array<{ packageName: string; plugin: IImporterPluginUI }> {
+    return Array.from(this.importerPlugins.entries()).map(([packageName, plugin]) => ({ packageName, plugin }));
+  }
+
+  /**
+   * Get all protocol plugins with their npm package names.
+   * Used by PluginLoaderService to build a per-plugin host bridge context.
+   */
+  getAllProtocolPluginEntries(): Array<{ packageName: string; plugin: IProtocolPluginUI }> {
+    return Array.from(this.protocolPlugins.entries()).map(([protocol, plugin]) => ({
+      packageName: this.protocolPackageNames.get(protocol) ?? protocol,
+      plugin
+    }));
+  }
+
+  /**
+   * Get all auth plugins with their npm package names.
+   * Used by PluginLoaderService to build a per-plugin host bridge context.
+   */
+  getAllAuthPluginEntries(): Array<{ packageName: string; plugin: IAuthPluginUI }> {
+    return Array.from(this.authPlugins.entries()).map(([type, plugin]) => ({
+      packageName: this.authPackageNames.get(type) ?? type,
+      plugin
+    }));
+  }
+
+  /**
+   * Resolve the npm package name for a protocol string.
+   * Returns undefined if the protocol is not registered.
+   */
+  getPackageNameForProtocol(protocol: string): string | undefined {
+    return this.protocolPackageNames.get(protocol);
+  }
+
+  /**
+   * Resolve the npm package name for an auth type string.
+   * Returns undefined if the auth type is not registered.
+   */
+  getPackageNameForAuthType(type: string): string | undefined {
+    return this.authPackageNames.get(type);
+  }
+
+  /**
+   * Persist plugin-specific settings under the existing settings.plugins[] list.
+   * Canonical key is npm package name for parity with enable/disable settings.
+   */
+  async setPluginSettings(packageName: string, pluginSettings: Record<string, unknown> | undefined): Promise<void> {
+    const settings = await settingsService.getAll();
+    const plugins = settings.plugins || [];
+
+    const existing = plugins.find(p => p.name === packageName);
+    if (existing) {
+      if (pluginSettings === undefined || Object.keys(pluginSettings).length === 0) {
+        delete existing.settings;
+      } else {
+        existing.settings = pluginSettings;
+      }
+    } else {
+      plugins.push({
+        name: packageName,
+        enabled: true,
+        ...(pluginSettings !== undefined && Object.keys(pluginSettings).length > 0 ? { settings: pluginSettings } : {})
+      });
+    }
+
+    await settingsService.update({ plugins });
+  }
+
+  async getPluginSettings(packageName: string): Promise<Record<string, unknown> | undefined> {
+    const settings = await settingsService.getAll();
+    const plugins = settings.plugins || [];
+    const existing = plugins.find(p => p.name === packageName);
+    return existing?.settings;
   }
 
   getAllVaultPlugins(): any[] {
@@ -250,6 +382,10 @@ export class PluginManagerService extends EventEmitter {
   
   getAuthMetadata(type: string): ApiquestMetadata | undefined {
     return this.authMetadata.get(type);
+  }
+
+  getImporterMetadata(id: string): ApiquestMetadata | undefined {
+    return this.importerMetadata.get(id);
   }
   
   /**

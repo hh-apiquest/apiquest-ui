@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWorkspace, useTabNavigation, useScreenMode } from '../../contexts';
 import * as Dialog from '@radix-ui/react-dialog';
-import { TextField, Button, Badge } from '@radix-ui/themes';
+import { TextField, Button, Badge, DropdownMenu } from '@radix-ui/themes';
 import {
   PlusIcon,
   FolderPlusIcon,
@@ -24,6 +24,34 @@ import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { UnifiedContextMenu, type MenuAction } from '../shared/UnifiedContextMenu';
 import { RequestMetadataIcons } from '../shared/RequestMetadataIcons';
 
+/** A single import action item shown in the Import dropdown. */
+type ImportAction = {
+  pluginPackageName: string;
+  format: string;
+  label: string;
+  fileExtensions: string[];
+  sourceKind: 'file' | 'directory';
+};
+
+/** Build the list of available import actions from installed importer plugins. */
+function getImportActions(): ImportAction[] {
+  const actions: ImportAction[] = [];
+  for (const { packageName, plugin } of pluginManagerService.getAllImporterPluginEntries()) {
+    for (const format of plugin.importFormats) {
+      const ext = plugin.fileExtensions[format];
+      if (!ext) continue;
+      actions.push({
+        pluginPackageName: packageName,
+        format,
+        label: format, // plugins can enrich this later via a label map
+        fileExtensions: ext.extensions,
+        sourceKind: ext.kind,
+      });
+    }
+  }
+  return actions;
+}
+
 export function CollectionsPanel() {
   const { workspace, refreshWorkspace } = useWorkspace();
   const { setMode } = useScreenMode();
@@ -36,32 +64,60 @@ export function CollectionsPanel() {
   const [hasProtocolPlugins, setHasProtocolPlugins] = useState(
     () => pluginManagerService.getAllProtocolPlugins().length > 0
   );
+  // Import actions list rebuilt when plugins change
+  const [importActions, setImportActions] = useState<ImportAction[]>(getImportActions);
 
   useEffect(() => {
     const checkPlugins = () => {
       setHasProtocolPlugins(pluginManagerService.getAllProtocolPlugins().length > 0);
+      setImportActions(getImportActions());
     };
     pluginManagerService.on('pluginsReloaded', checkPlugins);
     pluginManagerService.on('pluginsLoaded', checkPlugins);
     pluginManagerService.on('protocolPluginRegistered', checkPlugins);
+    pluginManagerService.on('importerPluginRegistered', checkPlugins);
     return () => {
       pluginManagerService.off('pluginsReloaded', checkPlugins);
       pluginManagerService.off('pluginsLoaded', checkPlugins);
       pluginManagerService.off('protocolPluginRegistered', checkPlugins);
+      pluginManagerService.off('importerPluginRegistered', checkPlugins);
     };
   }, []);
 
   if (!workspace) return null;
 
-  const handleImport = async () => {
+  /**
+   * Invoke the importer pipeline for the given plugin format.
+   * The main process shows the file/directory dialog, reads the source,
+   * and routes conversion through the plugin's hostBundle.
+   */
+  const handleImportWithFormat = async (
+    pluginPackageName: string,
+    format: string,
+    fileExtensions: string[],
+    sourceKind: 'file' | 'directory'
+  ) => {
     try {
-      const result = await window.quest.workspace.importCollection(workspace.id);
-      if (result) {
-        await refreshWorkspace();
+      const result = await window.quest.workspace.importCollection(workspace.id, {
+        pluginPackageName,
+        format,
+        fileExtensions,
+        sourceKind
+      });
+      if (!result) return; // User cancelled the dialog
+      if (!result.success) {
+        const msg = result.errors?.join('\n') ?? 'Import failed';
+        console.error('[CollectionsPanel] Import failed:', msg);
+        alert(`Import failed: ${msg}`);
+        return;
       }
+      if (result.warnings && result.warnings.length > 0) {
+        console.warn('[CollectionsPanel] Import warnings:', result.warnings);
+      }
+      await refreshWorkspace();
     } catch (error) {
-      console.error('Failed to import collection:', error);
-      alert('Failed to import collection');
+      console.error('[CollectionsPanel] Failed to import collection:', error);
+      alert('Import failed. Check the console for details.');
     }
   };
 
@@ -83,13 +139,37 @@ export function CollectionsPanel() {
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{ flex: 1 }}
         />
-        <button
-          onClick={handleImport}
-          style={{ padding: '4px 8px', fontSize: '12px', background: 'var(--gray-3)', borderRadius: '4px', border: 'none', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
-          title="Import Collection"
-        >
-          <ArrowUpTrayIcon style={{ width: '12px', height: '12px' }} />
-        </button>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            <button
+              style={{ padding: '4px 8px', fontSize: '12px', background: 'var(--gray-3)', borderRadius: '4px', border: 'none', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+              title="Import Collection"
+            >
+              <ArrowUpTrayIcon style={{ width: '12px', height: '12px' }} />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content size="1">
+            {importActions.length === 0 ? (
+              <DropdownMenu.Item disabled>No importers installed</DropdownMenu.Item>
+            ) : (
+              importActions.map((action) => (
+                <DropdownMenu.Item
+                  key={`${action.pluginPackageName}::${action.format}`}
+                  onSelect={() =>
+                    handleImportWithFormat(
+                      action.pluginPackageName,
+                      action.format,
+                      action.fileExtensions,
+                      action.sourceKind
+                    )
+                  }
+                >
+                  {action.label}
+                </DropdownMenu.Item>
+              ))
+            )}
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
         <button
           onClick={() => setShowNewCollection(true)}
           style={{ padding: '4px 8px', fontSize: '12px', background: 'var(--accent-9)', color: 'white', borderRadius: '4px', border: 'none', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}

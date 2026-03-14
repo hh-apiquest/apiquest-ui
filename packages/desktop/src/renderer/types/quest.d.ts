@@ -16,6 +16,24 @@ export interface MarketplacePlugin {
   author?: string;
 }
 
+export interface AICompletionRequest {
+  prompt: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AICompletionResponse {
+  text: string;
+  model?: string;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+}
+
 // Single source of truth for the preload API exposed as window.quest
 // Do not redeclare window.quest in individual files; import types and use this declaration.
 
@@ -154,7 +172,23 @@ declare global {
         duplicateCollection: (workspaceId: string, collectionId: string, newName: string) => Promise<string>;
         deleteCollection: (workspaceId: string, collectionId: string) => Promise<void>;
         updateCollectionVariables: (workspaceId: string, collectionId: string, variables: any) => Promise<void>;
-        importCollection: (workspaceId: string) => Promise<string | null>;
+        importCollection: (
+          workspaceId: string,
+          params?: {
+            pluginPackageName: string;
+            format: string;
+            fileExtensions: string[];
+            sourceKind: 'file' | 'directory';
+          }
+        ) => Promise<{
+          success: boolean;
+          fileName?: string;
+          collectionId?: string;
+          pluginPackageName?: string;
+          format?: string;
+          warnings?: string[];
+          errors?: string[];
+        } | null>;
         exportCollection: (workspaceId: string, collectionId: string) => Promise<string | null>;
         
         // Folder operations
@@ -218,6 +252,29 @@ declare global {
         install: (packageNameOrUrl: string) => Promise<{ success: boolean; error?: string }>;
         remove: (pluginName: string) => Promise<boolean>;
         searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all') => Promise<MarketplacePlugin[]>;
+      };
+
+      ai: {
+        isConfigured: () => Promise<boolean>;
+        complete: (request: AICompletionRequest) => Promise<AICompletionResponse>;
+      };
+
+      /**
+       * Plugin host bridge — generic relay for privileged plugin operations.
+       * Each method is scoped to the calling plugin's npm package name.
+       * Renderer plugin code must not call this directly; use PluginUIContext.host instead.
+       */
+      host: {
+        showOpenDialog(packageName: string, options: {
+          kind?: 'file' | 'directory';
+          title?: string;
+          buttonLabel?: string;
+          filters?: Array<{ name: string; extensions: string[] }>;
+          multiSelections?: boolean;
+        }): Promise<string[] | null>;
+        readFile(packageName: string, filePath: string): Promise<string>;
+        fetchText(packageName: string, url: string, options?: { headers?: Record<string, string> }): Promise<string>;
+        invoke<T = unknown>(packageName: string, action: string, payload?: unknown): Promise<T>;
       };
 
       // Runner - execution-based architecture

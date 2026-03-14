@@ -25,8 +25,8 @@
     "test:desktop": "yarn workspace @apiquest/desktop test",
     "test:coverage": "yarn workspace @apiquest/desktop test -- --coverage",
     "test:watch": "yarn workspace @apiquest/desktop test -- --watch",
-    "lint": "eslint packages/*/src packages/*/tests --ext .ts,.tsx",
-    "lint:fix": "eslint packages/*/src packages/*/tests --ext .ts,.tsx --fix",
+    "lint": "eslint \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/tests/**/*.{ts,tsx}\" --no-error-on-unmatched-pattern",
+    "lint:fix": "eslint \"packages/*/src/**/*.{ts,tsx}\" \"packages/*/tests/**/*.{ts,tsx}\" --fix --no-error-on-unmatched-pattern",
     "typecheck": "yarn workspaces foreach -A run typecheck"
   },
   "devDependencies": {

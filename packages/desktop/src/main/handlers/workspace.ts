@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { workspaceManager } from '../WorkspaceManager.js';
 import { walkDirectory } from '../utils/fileSystem.js';
+import { dispatchPluginHostInvoke, grantPath } from './host.js';
 
 // Workspace registry: maps workspace ID (GUID) to filesystem path
 export const workspaceRegistry = new Map<string, string>();
@@ -173,29 +174,151 @@ export function registerWorkspaceHandlers() {
     return await workspaceManager.listWorkspacesWithMetadata();
   });
 
-  ipcMain.handle('workspace:importCollection', async (_event, workspaceId: string) => {
-    const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
-    
-    const importPath = await dialog.showOpenDialog({
-      properties: ['openFile'],
-      filters: [
-        { name: 'ApiQuest Collections', extensions: ['apiquest.json', 'json'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
-    });
-    
-    if (importPath.canceled || !importPath.filePaths[0]) {
-      return null;
+  /**
+   * Import a collection using an installed importer plugin.
+   *
+   * Params:
+   *   workspaceId         — target workspace
+   *   pluginPackageName   — npm package name of the importer plugin (e.g. '@apiquest/plugin-importer-ui')
+   *   format              — format string (e.g. 'postman-v2.1')
+   *   fileExtensions      — allowed file extensions for the dialog (e.g. ['.json'])
+   *   sourceKind          — 'file' or 'directory'
+   *
+   * Returns ImportCollectionResult or null if the user cancelled.
+   */
+  ipcMain.handle(
+    'workspace:importCollection',
+    async (
+      _event,
+      workspaceId: string,
+      params?: {
+        pluginPackageName: string;
+        format: string;
+        fileExtensions: string[];
+        sourceKind: 'file' | 'directory';
+      }
+    ): Promise<{
+      success: boolean;
+      fileName?: string;
+      collectionId?: string;
+      pluginPackageName?: string;
+      format?: string;
+      warnings?: string[];
+      errors?: string[];
+    } | null> => {
+      const workspacePath = workspaceRegistry.get(workspaceId);
+      if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+
+      // Fallback: legacy copy-only mode when no plugin params provided
+      if (!params) {
+        const importPath = await dialog.showOpenDialog({
+          properties: ['openFile'],
+          filters: [
+            { name: 'ApiQuest Collections', extensions: ['apiquest.json', 'json'] },
+            { name: 'All Files', extensions: ['*'] }
+          ]
+        });
+        if (importPath.canceled || !importPath.filePaths[0]) return null;
+        const sourceFile = importPath.filePaths[0];
+        const collectionsDir = path.join(workspacePath, 'collections');
+        await fs.mkdir(collectionsDir, { recursive: true });
+        const fileName = path.basename(sourceFile);
+        const targetFile = path.join(collectionsDir, fileName);
+        await fs.copyFile(sourceFile, targetFile);
+        return { success: true, fileName };
+      }
+
+      const { pluginPackageName, format, fileExtensions, sourceKind } = params;
+
+      // Step 1: Show dialog and get source path
+      const isDirectory = sourceKind === 'directory';
+      const dialogResult = await dialog.showOpenDialog({
+        title: `Import ${format}`,
+        properties: isDirectory ? ['openDirectory'] : ['openFile'],
+        filters: isDirectory ? undefined : [
+          {
+            name: format,
+            extensions: fileExtensions.map(e => e.replace('.', ''))
+          },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      });
+
+      if (dialogResult.canceled || dialogResult.filePaths.length === 0) return null;
+
+      const sourcePath = dialogResult.filePaths[0];
+
+      // Step 2: Grant the path to the plugin (same as showOpenDialog via IPC would do)
+      grantPath(pluginPackageName, sourcePath);
+
+      // Step 3: Read the source file (directory reads are handled inside the plugin)
+      let sourceData: string;
+      if (isDirectory) {
+        // For directory imports, pass the directory path — the plugin reads what it needs
+        sourceData = sourcePath;
+      } else {
+        sourceData = await fs.readFile(sourcePath, 'utf-8');
+      }
+
+      // Step 4: Invoke the plugin's 'convert' handler via the host bridge dispatch
+      let convertResult: unknown;
+      try {
+        convertResult = await dispatchPluginHostInvoke(pluginPackageName, 'convert', {
+          data: sourceData,
+          format,
+          sourcePath
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, errors: [msg] };
+      }
+
+      const collection = convertResult as {
+        info: { id?: string; name?: string };
+        protocol?: string;
+        variables?: unknown[];
+        items?: unknown[];
+        warnings?: string[];
+      };
+
+      // Step 5: Normalize the collection
+      if (!collection?.info) {
+        return { success: false, errors: ['Plugin returned an invalid collection (no info field)'] };
+      }
+
+      const collectionId = collection.info.id || crypto.randomUUID();
+      collection.info.id = collectionId;
+
+      const rawName = collection.info.name || path.basename(sourcePath, path.extname(sourcePath));
+      const sanitizedName = rawName.trim().replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+      const fileName = `${sanitizedName}.apiquest.json`;
+
+      collection.info.name = rawName;
+      if (!collection.protocol) collection.protocol = 'http';
+      if (!Array.isArray(collection.variables)) collection.variables = [];
+      if (!Array.isArray(collection.items)) collection.items = [];
+
+      // Step 6: Persist the collection
+      const collectionsDir = path.join(workspacePath, 'collections');
+      await fs.mkdir(collectionsDir, { recursive: true });
+      const filePath = path.join(collectionsDir, fileName);
+      await fs.writeFile(filePath, JSON.stringify(collection, null, 2), 'utf-8');
+
+      // Register in runtime registry
+      collectionRegistry.set(collectionId, fileName);
+
+      console.log(`[WorkspaceHandler] Imported collection '${rawName}' as ${fileName} (plugin: ${pluginPackageName}, format: ${format})`);
+
+      return {
+        success: true,
+        fileName,
+        collectionId,
+        pluginPackageName,
+        format,
+        warnings: collection.warnings,
+      };
     }
-    
-    const sourceFile = importPath.filePaths[0];
-    const fileName = path.basename(sourceFile);
-    const targetFile = path.join(workspacePath, fileName);
-    
-    await fs.copyFile(sourceFile, targetFile);
-    return fileName;
-  });
+  );
 
   ipcMain.handle('workspace:exportCollection', async (_event, workspaceId: string, collectionId: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);

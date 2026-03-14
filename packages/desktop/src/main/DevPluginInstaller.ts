@@ -23,7 +23,8 @@ const WORKSPACE_UI_PLUGINS = [
   '@apiquest/plugin-http-ui',
   '@apiquest/plugin-auth-ui',
   '@apiquest/plugin-sse-ui',
-  '@apiquest/plugin-soap-ui'
+  '@apiquest/plugin-soap-ui',
+  '@apiquest/plugin-importer-ui'
 ];
 
 const WORKSPACE_CORE_PLUGINS = [

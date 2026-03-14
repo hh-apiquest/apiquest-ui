@@ -22,7 +22,15 @@ export type AppSettings = {
     externalPaths?: string[];
     lastActivePath?: string;
   };
-  plugins?: Array<{ name: string; enabled: boolean }>;
+  plugins?: Array<{
+    name: string;
+    enabled: boolean;
+    /**
+     * Optional plugin-specific persisted settings.
+     * Used by desktop plugins (including importer plugins) for custom settings sections.
+     */
+    settings?: Record<string, unknown>;
+  }>;
   tools?: {
     /**
      * Optional absolute path to an npm CLI binary.
@@ -37,6 +45,13 @@ export type AppSettings = {
      * Useful when git is installed in a non-standard location.
      */
     gitPath?: string;
+  };
+  ai?: {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    timeoutMs?: number;
   };
   secrets?: SecretsSettings;
 };
@@ -54,6 +69,13 @@ const DEFAULT_SETTINGS: Required<AppSettings> = {
   tools: {
     npmPath: '',
     gitPath: ''
+  },
+  ai: {
+    enabled: false,
+    baseUrl: '',
+    apiKey: '',
+    model: 'gpt-4o-mini',
+    timeoutMs: 30000
   },
   secrets: {
     workspaces: {}

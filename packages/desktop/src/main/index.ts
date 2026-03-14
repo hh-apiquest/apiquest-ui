@@ -12,6 +12,8 @@ import { registerGlobalVariablesHandlers } from './handlers/globalVariables.js';
 import { registerRunnerHandlers } from './handlers/runner.js';
 import { registerWindowHandlers } from './handlers/window.js';
 import { registerPluginsHandlers } from './handlers/plugins.js';
+import { registerAiHandlers } from './handlers/ai.js';
+import { registerHostHandlers } from './handlers/host.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +83,8 @@ function registerHandlers() {
   registerRunnerHandlers(mainWindow);
   registerWindowHandlers(mainWindow);
   registerPluginsHandlers();
+  registerAiHandlers();
+  registerHostHandlers();
 }
 
 // IMPORTANT: Register custom protocol schemes BEFORE app.whenReady()

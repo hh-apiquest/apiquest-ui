@@ -2,8 +2,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
-// Renderer bundle build (default — loaded via plugin:// protocol in the Electron renderer).
-// React, Radix and the @apiquest/plugin-soap runtime peer are externalized.
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -18,8 +16,7 @@ export default defineConfig({
         'react-dom',
         'react/jsx-runtime',
         'react/jsx-dev-runtime',
-        '@radix-ui/themes',
-        '@apiquest/plugin-soap'
+        '@radix-ui/themes'
       ],
       output: {
         preserveModules: false
@@ -29,3 +26,4 @@ export default defineConfig({
     emptyOutDir: true
   }
 });
+
