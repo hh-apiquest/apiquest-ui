@@ -13,7 +13,7 @@ interface RunnerExecutionProps {
 
 export function RunnerExecution({ tab }: RunnerExecutionProps) {
   const { workspace } = useWorkspace();
-  const { clearTabExecution, updateTabExecution } = useTabNavigation();
+  const { clearTabExecution, updateTabExecution, setTabEditorState, getTabEditorState } = useTabNavigation();
   const { setMetadata } = useTabStatusActions();
   const metadata = tab.metadata as RunnerMetadata;
   const [isRunning, setIsRunning] = useState(false);
@@ -45,9 +45,34 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
     const loadCollection = async () => {
       if (!workspace || !metadata.collectionId) return;
 
+      // Check in-memory state first (survives tab switches without re-loading).
+      // Each executor tab uses its own tab.id as key so multiple executors never share state.
+      const cachedCollection = (getTabEditorState(tab.id) as { collection: Collection } | undefined)?.collection;
+      if (cachedCollection !== undefined && cachedCollection !== null) {
+        setCollection(cachedCollection);
+        return;
+      }
+
       try {
         const loaded = await window.quest.workspace.loadCollection(workspace.id, metadata.collectionId);
-        setCollection(loaded as Collection);
+        // Seed _runnerState from metadata so RunnerTab restores the initial selection/config.
+        const seeded = {
+          ...loaded,
+          _runnerState: {
+            selectedRequests: metadata.selectedRequests,
+            config: {
+              environmentId: metadata.config.environmentId,
+              iterations: metadata.config.iterations,
+              delay: metadata.config.delay ?? 0,
+              parallel: metadata.config.parallel ?? false,
+              concurrency: metadata.config.concurrency ?? 1,
+              persistVariables: metadata.config.persistVariables ?? false,
+              saveResponses: metadata.config.saveResponses ?? false
+            }
+          }
+        };
+        setCollection(seeded);
+        setTabEditorState(tab.id, { collection: seeded });
       } catch (error) {
         console.error('Failed to load collection for runner execution:', error);
       }
@@ -265,18 +290,12 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
               {collection ? (
                 <RunnerTab
                   collection={collection}
-                  onChange={() => null}
-                  workspace={workspace}
-                  initialSelectedRequests={metadata.selectedRequests}
-                  initialConfig={{
-                    environmentId: metadata.config.environmentId,
-                    iterations: metadata.config.iterations,
-                    delay: metadata.config.delay ?? 0,
-                    parallel: metadata.config.parallel ?? false,
-                    concurrency: metadata.config.concurrency ?? 1,
-                    persistVariables: metadata.config.persistVariables ?? false,
-                    saveResponses: metadata.config.saveResponses ?? false
+                  onChange={(updatedCollection) => {
+                    const updated = updatedCollection as Collection;
+                    setCollection(updated);
+                    setTabEditorState(tab.id, { collection: updated });
                   }}
+                  workspace={workspace}
                   onRun={handleSetupRun}
                 />
               ) : (

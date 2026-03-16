@@ -8,13 +8,12 @@ import type { SoapRequestData } from '@apiquest/plugin-soap';
  * Generated headers (Content-Type and SOAPAction) are derived from soapVersion and soapAction.
  * These are shown read-only and never persisted to request.data.headers.
  */
-export function HeadersTab({ request, onChange, uiContext }: UITabProps) {
+export function HeadersTab({ request, onChange, uiContext }: UITabProps): React.ReactElement {
   const data = request.data as unknown as SoapRequestData & { _ui?: { headersRows?: HeaderEntry[]; headersEditorState?: HeadersEditorState; [k: string]: unknown } };
 
   // Read HeaderEntry[] from transient _ui state; fall back to building from Record
-  const headers: HeaderEntry[] = data._ui?.headersRows
-    ? (data._ui.headersRows as HeaderEntry[])
-    : recordToHeaderEntries(data.headers);
+  const headersRows = data._ui?.headersRows;
+  const headers: HeaderEntry[] = headersRows ?? recordToHeaderEntries(data.headers);
 
   const headersEditorState: HeadersEditorState = data._ui?.headersEditorState ?? {};
 
@@ -25,7 +24,7 @@ export function HeadersTab({ request, onChange, uiContext }: UITabProps) {
     const action = data.soapAction ?? '';
 
     if (version === '1.2') {
-      const ct = `application/soap+xml; charset=utf-8${action ? `; action="${action}"` : ''}`;
+      const ct = `application/soap+xml; charset=utf-8${action.trim() !== '' ? `; action="${action}"` : ''}`;
       result.push({ key: 'Content-Type', value: ct, source: 'SOAP 1.2 body mode', readonly: true });
     } else {
       result.push({ key: 'Content-Type', value: 'text/xml; charset=utf-8', source: 'SOAP 1.1 body mode', readonly: true });
@@ -35,7 +34,7 @@ export function HeadersTab({ request, onChange, uiContext }: UITabProps) {
     return result;
   }, [data.soapVersion, data.soapAction]);
 
-  function handleChange(newRows: HeaderEntry[]) {
+  function handleChange(newRows: HeaderEntry[]): void {
     onChange({
       ...request,
       data: {
@@ -46,7 +45,7 @@ export function HeadersTab({ request, onChange, uiContext }: UITabProps) {
     });
   }
 
-  function handleEditorStateChange(newState: HeadersEditorState) {
+  function handleEditorStateChange(newState: HeadersEditorState): void {
     onChange({
       ...request,
       data: {
@@ -68,7 +67,10 @@ export function HeadersTab({ request, onChange, uiContext }: UITabProps) {
 }
 
 function recordToHeaderEntries(record: Record<string, string> | undefined): HeaderEntry[] {
-  if (!record) return [];
+  if (record === undefined) {
+    return [];
+  }
+
   return Object.entries(record).map(([key, value]) => ({
     key,
     value,
@@ -80,7 +82,7 @@ function recordToHeaderEntries(record: Record<string, string> | undefined): Head
 function headerEntriesToRecord(entries: HeaderEntry[]): Record<string, string> {
   const record: Record<string, string> = {};
   for (const entry of entries) {
-    if (entry.enabled && entry.key.trim()) {
+    if (entry.enabled && entry.key.trim() !== '') {
       record[entry.key] = entry.value;
     }
   }

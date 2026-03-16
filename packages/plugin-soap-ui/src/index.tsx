@@ -27,8 +27,6 @@ import { SecurityTab } from './SecurityTab.js';
 import { AttachmentsTab } from './AttachmentsTab.js';
 import { SoapResponseViewer } from './SoapResponseViewer.js';
 
-let UI: PluginUIContext;
-
 /**
  * Address bar — SOAP endpoint-only.
  * No SOAP version selector here; version is handled in WSDL/Body tabs.
@@ -39,7 +37,7 @@ function SoapAddressBar({
 }: {
   request: Request;
   onChange: (request: Request) => void;
-}) {
+}): React.ReactElement {
   const data = request.data as unknown as SoapRequestData;
   const url = data.url ?? '';
 
@@ -99,7 +97,7 @@ function SoapAddressBar({
 
 const SoapSummaryLine: SummaryLineComponent = ({ request, response }) => {
   const data = request?.data as unknown as SoapRequestData | undefined;
-  const soapData = response?.data as unknown as SoapResponseData | undefined;
+  const soapData = response?.data as SoapResponseData | undefined;
 
   const status = soapData?.status ?? 0;
   const statusText = soapData?.statusText ?? '';
@@ -122,10 +120,10 @@ const SoapSummaryLine: SummaryLineComponent = ({ request, response }) => {
   return (
     <RT.Flex align="center" gap="2" style={{ minWidth: 0, overflow: 'hidden' }}>
       <RT.Badge color="amber" variant="soft">SOAP</RT.Badge>
-      {operation && (
+      {operation !== undefined && operation.trim() !== '' && (
         <RT.Badge color="violet" variant="soft">{operation}</RT.Badge>
       )}
-      {url && (
+      {url.trim() !== '' && (
         <RT.Text
           size="1"
           color="gray"
@@ -149,11 +147,11 @@ const SoapSummaryLine: SummaryLineComponent = ({ request, response }) => {
   );
 };
 
-function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewProps) {
+function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewProps): React.ReactElement {
   const RT = uiContext.Radix;
   const Monaco = uiContext.Monaco;
   const data = request?.data as unknown as SoapRequestData | undefined;
-  const soapData = response?.data as unknown as SoapResponseData | undefined;
+  const soapData = response?.data as SoapResponseData | undefined;
 
   const status = soapData?.status ?? 0;
   const statusText = soapData?.statusText ?? '';
@@ -170,7 +168,7 @@ function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewP
         <RT.Text size="1" style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
           {data?.url ?? ''}
         </RT.Text>
-        {data?.operation && (
+        {data?.operation !== undefined && data.operation.trim() !== '' && (
           <RT.Flex gap="2" align="center" mt="2">
             <RT.Badge color="violet" variant="soft" size="1">{data.operation}</RT.Badge>
             <RT.Badge color="amber" variant="soft" size="1">SOAP {data.soapVersion ?? '1.1'}</RT.Badge>
@@ -193,12 +191,12 @@ function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewP
       )}
 
       {/* Fault details */}
-      {hasFault && soapData?.fault && (
+      {hasFault && soapData?.fault !== undefined && (
         <RT.Callout.Root color="red" size="1">
           <RT.Callout.Text>
             <strong>Fault Code:</strong> {soapData.fault.code ?? 'unknown'}
-            {soapData.fault.reason && <><br /><strong>Reason:</strong> {soapData.fault.reason}</>}
-            {soapData.fault.detail && <><br /><strong>Detail:</strong> {soapData.fault.detail}</>}
+            {soapData.fault.reason !== undefined && soapData.fault.reason.trim() !== '' && <><br /><strong>Reason:</strong> {soapData.fault.reason}</>}
+            {soapData.fault.detail !== undefined && soapData.fault.detail.trim() !== '' && <><br /><strong>Detail:</strong> {soapData.fault.detail}</>}
           </RT.Callout.Text>
         </RT.Callout.Root>
       )}
@@ -225,7 +223,7 @@ function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewP
       )}
 
       {/* Raw XML body */}
-      {rawXml && (
+      {rawXml.trim() !== '' && (
         <RT.Box style={{ flex: 1, minHeight: 200, display: 'flex', flexDirection: 'column' }}>
           <RT.Text size="1" weight="bold" style={{ display: 'block', marginBottom: 4 }} color="gray">SOAP Envelope (XML)</RT.Text>
           <div style={{ height: 300 }}>
@@ -247,8 +245,8 @@ function SoapDetailView({ request, response, uiContext, uiState }: ProtocolViewP
 export const soapPluginUI: IProtocolPluginUI = {
   protocol: 'soap',
 
-  setup(uiContext: PluginUIContext) {
-    UI = uiContext;
+  setup(_uiContext: PluginUIContext): void {
+    // No-op for now. Plugin UI components receive full context via props.
   },
 
   createNewRequest(name: string): Request {
@@ -261,7 +259,7 @@ export const soapPluginUI: IProtocolPluginUI = {
         soapVersion: '1.1',
         body: { mode: 'operation', args: {} },
       },
-    } as any;
+    };
   },
 
   getRequestBadge(request: Request): RequestBadge {

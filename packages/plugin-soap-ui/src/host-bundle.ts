@@ -42,7 +42,7 @@ const {
 handlers.on('loadWsdl', async (payload: unknown): Promise<{ xml: string }> => {
   const { location } = payload as { location: string };
 
-  if (!location || typeof location !== 'string') {
+  if (typeof location !== 'string' || location.trim() === '') {
     throw new Error('[plugin-soap-ui] loadWsdl: location must be a non-empty string');
   }
 

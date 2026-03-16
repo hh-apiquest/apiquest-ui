@@ -2,10 +2,35 @@
 // Layer: Services (NO React dependencies)
 
 import { EventEmitter } from 'eventemitter3';
+import type { Request } from '@apiquest/types';
 import type { ExecutionEvent } from '../../types/execution';
 import type { NetworkEntry, NetworkState } from '../types/network';
 import { pluginLoader } from './PluginLoaderService';
 import { buildSummary } from '../utils/responseAdapters';
+
+function isRequest(value: unknown): value is Request {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return typeof record.id === 'string' && typeof record.name === 'string' && record.type === 'request';
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+  }
+
+  return String(error ?? 'Unknown error');
+}
 
 type NetworkServiceEvents = {
   updated: (entries: NetworkEntry[]) => void;
@@ -61,8 +86,11 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
   }
 
   private handleBeforeRequest(event: ExecutionEvent): void {
-    const request = event.data?.request as any;
-    if (!request) return;
+    const requestData = event.data?.request;
+    if (!isRequest(requestData)) {
+      return;
+    }
+    const request = requestData;
 
     // Protocol comes from event.data.protocol (passed by RunnerService), not request.protocol
     // Request interface doesn't have protocol field - it's inherited from collection
@@ -95,13 +123,14 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
     const entry = this.getOrCreateEntry(event);
     if (!entry) return;
 
-    const request = event.data?.request;
+    const requestData = event.data?.request;
+    const request = isRequest(requestData) ? requestData : undefined;
     const response = event.data?.response;
     
     // Use plugin presenter to extract response summary
-    const protocol = event.data?.protocol || request?.protocol;
+    const protocol = event.data?.protocol;
     const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-    const summaryView = buildSummary(request, response, plugin);
+    const summaryView = request ? buildSummary(request, response, plugin) : null;
     
     entry.response = response;
     entry.responseSummary = summaryView;
@@ -146,7 +175,7 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
     if (!entry) return;
 
     const error = event.data?.error;
-    entry.error = error?.message || String(error || 'Unknown error');
+    entry.error = getErrorMessage(error);
     entry.endTime = event.timestamp || Date.now();
 
     this.emit('updated', this.getEntries());
@@ -187,7 +216,8 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
 
   private getOrCreateEntry(event: ExecutionEvent): NetworkEntry | null {
     // Try with requestId first (collection runs), then fall back to executionId only
-    const request = event.data?.request as any;
+    const requestData = event.data?.request;
+    const request = isRequest(requestData) ? requestData : undefined;
     const requestId = request?.id;
     const entryKey = this.makeEntryKey(event.executionId, requestId);
     

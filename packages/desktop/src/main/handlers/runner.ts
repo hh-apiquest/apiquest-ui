@@ -4,9 +4,9 @@ import { runnerService } from '../RunnerService.js';
 import type { RunRequestParams } from '../../types/execution.js';
 import type { RunCollectionParams } from '../../renderer/types/quest.js';
 
-export function registerRunnerHandlers(mainWindow: BrowserWindow | null) {
+export function registerRunnerHandlers(mainWindow: BrowserWindow | null): void {
   // Set main window for event streaming
-  if (mainWindow) {
+  if (mainWindow !== null) {
     runnerService.setMainWindow(mainWindow);
   }
   
@@ -25,7 +25,7 @@ export function registerRunnerHandlers(mainWindow: BrowserWindow | null) {
       
       console.log('[Main] Collection run started:', params.runId);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Main] Collection run error:', error);
       throw error;
     }
@@ -40,7 +40,7 @@ export function registerRunnerHandlers(mainWindow: BrowserWindow | null) {
       
       console.log('[Main] Run stopped:', runId);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Main] Stop run error:', error);
       throw error;
     }
@@ -51,7 +51,7 @@ export function registerRunnerHandlers(mainWindow: BrowserWindow | null) {
     try {
       const status = await runnerService.getRunStatus(runId);
       return status;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Main] Get status error:', error);
       throw error;
     }
@@ -66,7 +66,7 @@ export function registerRunnerHandlers(mainWindow: BrowserWindow | null) {
       
       console.log('[Main] Request completed for execution:', params.executionId);
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Main] Request execution error:', error);
       throw error;  // Let UI handle error display
     }

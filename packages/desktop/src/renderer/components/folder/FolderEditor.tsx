@@ -1,5 +1,5 @@
 // FolderEditor - Editor for folder-level settings (Auth, Scripts)
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { pluginLoader } from '../../services';
 import { useTabEditorBridge, useTabStatusActions, useTabNavigation } from '../../contexts';
 import { useWorkspace, useTheme } from '../../contexts';
@@ -16,11 +16,13 @@ interface FolderEditorProps {
 
 export function FolderEditor({ tab }: FolderEditorProps) {
   const { setDirty, setName } = useTabStatusActions();
-  const { registerSaveHandler } = useTabEditorBridge();
-  const { saveResourceState, clearResourceState, getResourceState, updateTabUIState } = useTabNavigation();
+  const { registerSaveHandler, registerDiscardHandler } = useTabEditorBridge();
+  const { saveResourceState, clearResourceState, getResourceState, updateTabUIState, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { workspace, getCollection, updateFolder, clearCollectionCache, refreshWorkspace } = useWorkspace();
   const { actualTheme } = useTheme();
   const [folder, setFolder] = useState<any>(null);
+  // Stable ref so handleAutoSave never captures a stale folder closure.
+  const folderRef = useRef<any>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [collectionItems, setCollectionItems] = useState<Array<{ id: string; name: string; type: 'folder' | 'request' }>>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +36,11 @@ export function FolderEditor({ tab }: FolderEditorProps) {
     const newActiveSubTab = tab.uiState?.activeSubTab || 'auth';
     setActiveSubTab(newActiveSubTab);
   }, [tab.id, tab.uiState?.activeSubTab]);
+
+  // Keep folderRef current so handleAutoSave and the save handler always read latest data.
+  useEffect(() => {
+    folderRef.current = folder;
+  }, [folder]);
 
   // Load folder from workspace
   useEffect(() => {
@@ -75,23 +82,31 @@ export function FolderEditor({ tab }: FolderEditorProps) {
         const baseFolder = findFolder(loadedCollection.items);
         if (!baseFolder) throw new Error('Folder not found');
         
-        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+        // Primary: in-memory state from a previous tab switch.
+        // Secondary: IPC session state (app restart recovery).
+        const inMemoryState = getTabEditorState(tab.id) as any;
         
-        const finalFolder = {
-          ...baseFolder,
-          name: sessionState?.name || baseFolder.name,
-          auth: sessionState?.auth ?? baseFolder.auth,
-          folderPreScript: sessionState?.folderPreScript ?? baseFolder.folderPreScript ?? '',
-          folderPostScript: sessionState?.folderPostScript ?? baseFolder.folderPostScript ?? '',
-          preRequestScript: sessionState?.preRequestScript ?? baseFolder.preRequestScript ?? '',
-          postRequestScript: sessionState?.postRequestScript ?? baseFolder.postRequestScript ?? ''
-        };
+        let finalFolder: any;
+        if (inMemoryState) {
+          finalFolder = inMemoryState;
+          setDirty(tab.id, true);
+        } else {
+          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+          finalFolder = {
+            ...baseFolder,
+            name: sessionState?.name || baseFolder.name,
+            auth: sessionState?.auth ?? baseFolder.auth,
+            folderPreScript: sessionState?.folderPreScript ?? baseFolder.folderPreScript ?? '',
+            folderPostScript: sessionState?.folderPostScript ?? baseFolder.folderPostScript ?? '',
+            preRequestScript: sessionState?.preRequestScript ?? baseFolder.preRequestScript ?? '',
+            postRequestScript: sessionState?.postRequestScript ?? baseFolder.postRequestScript ?? ''
+          };
+          if (sessionState) {
+            setDirty(tab.id, true);
+          }
+        }
         
         setFolder(finalFolder);
-        
-        if (sessionState) {
-          setDirty(tab.id, true);
-        }
       } catch (error) {
         console.error('Failed to load folder:', error);
       } finally {
@@ -107,49 +122,64 @@ export function FolderEditor({ tab }: FolderEditorProps) {
     if (!workspace) return;
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!folder) return;
-      await updateFolder(tab.collectionId, tab.resourceId, folder);
+      if (!folderRef.current) return;
+      const currentFolder = folderRef.current;
+      await updateFolder(tab.collectionId, tab.resourceId, currentFolder);
       setDirty(tab.id, false);
+      clearTabEditorState(tab.id);
       clearCollectionCache(tab.collectionId);
       await refreshWorkspace();
       await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
-  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, tab.resourceId, folder, updateFolder, setDirty, clearCollectionCache, refreshWorkspace, clearResourceState]);
+  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, tab.resourceId, updateFolder, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
 
-  // Auto-save to session state
+  // Stable auto-save callback — does NOT depend on `folder` state directly.
+  // Reads folderRef.current to prevent useAutoSave's cleanup from firing on every change.
   const handleAutoSave = useCallback(async () => {
-    if (!workspace || !folder) return;
+    if (!workspace || !folderRef.current) return;
+    const currentFolder = folderRef.current;
     
     try {
       await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
-        name: folder.name,
+        name: currentFolder.name,
         // Normalize "inherit" to undefined - inherit is default behavior and shouldn't create session state
-        auth: folder.auth?.type === 'inherit' ? undefined : folder.auth,
-        folderPreScript: folder.folderPreScript,
-        folderPostScript: folder.folderPostScript,
-        preRequestScript: folder.preRequestScript,
-        postRequestScript: folder.postRequestScript
+        auth: currentFolder.auth?.type === 'inherit' ? undefined : currentFolder.auth,
+        folderPreScript: currentFolder.folderPreScript,
+        folderPostScript: currentFolder.folderPostScript,
+        preRequestScript: currentFolder.preRequestScript,
+        postRequestScript: currentFolder.postRequestScript
       });
     } catch (error) {
       console.error('AutoSave failed:', error);
     }
-  }, [workspace, folder, tab.resourceId, saveResourceState]);
+  }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
 
-  const autoSave = useAutoSave({
+  const { trigger: triggerAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
-    delay: 2000,
+    delay: 1000,
     enabled: !!workspace && !!folder
   });
 
+  useEffect(() => {
+    const unregisterDiscard = registerDiscardHandler(tab.id, async () => {
+      clearTabEditorState(tab.id);
+      await cancelAutoSave();
+    });
+
+    return unregisterDiscard;
+  }, [registerDiscardHandler, tab.id, cancelAutoSave, clearTabEditorState]);
+
   const handleFolderChange = (updatedFolder: any) => {
     setFolder(updatedFolder);
+    // Immediately store in in-memory tab state — primary persistence mechanism for tab switches.
+    setTabEditorState(tab.id, updatedFolder);
     setDirty(tab.id, true);
     if (updatedFolder?.name) {
       setName(tab.id, updatedFolder.name);
     }
-    autoSave.trigger();
+    triggerAutoSave();
   };
 
   if (isLoading) {

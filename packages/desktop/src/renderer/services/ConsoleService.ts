@@ -1,20 +1,21 @@
 // ConsoleService - Manages console messages from fracture events
 // Layer: Services (NO React dependencies)
 
-import type { 
-  ConsoleMessage, 
-  ConsoleFilter, 
+import { LogLevel, type EventPayloads } from '@apiquest/types';
+import type {
+  ConsoleMessage,
+  ConsoleFilter,
   ConsoleState,
-  ConsoleMessageLevel,
-  ConsoleMessageSource 
+  ConsoleMessageSource
 } from '../types/console';
 import { EventEmitter } from 'eventemitter3';
+import type { CollectionRunner } from '@apiquest/fracture';
 
 export class ConsoleService extends EventEmitter {
   private state: ConsoleState = {
     messages: [],
     filter: {
-      levels: ['log', 'info', 'warn', 'error', 'debug'],
+      levels: [LogLevel.TRACE, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR, LogLevel.DEBUG],
       sources: ['system', 'script', 'network', 'test']
     },
     maxMessages: 1000,
@@ -25,11 +26,11 @@ export class ConsoleService extends EventEmitter {
    * Add a message to the console
    */
   addMessage(
-    level: ConsoleMessageLevel,
+    level: LogLevel,
     source: ConsoleMessageSource,
     message: string,
     options?: {
-      data?: any;
+      data?: unknown;
       requestId?: string;
       requestName?: string;
       collectionId?: string;
@@ -61,71 +62,76 @@ export class ConsoleService extends EventEmitter {
   /**
    * Connect to fracture runner events
    */
-  connectToRunner(runner: any): void {
+  connectToRunner(runner: CollectionRunner): void {
     // Listen to fracture events and convert to console messages
     
-    runner.on('console', ({ message, level }: { message: string; level: string }) => {
+    runner.on('console', (payload: EventPayloads['console']) => {
       this.addMessage(
-        (level as ConsoleMessageLevel) || 'log',
+        payload.level,
         'script',
-        message
+        payload.message
       );
     });
 
-    runner.on('beforeRequest', ({ request, path }: any) => {
-      this.addMessage('info', 'system', `Executing: ${request.name}`, {
-        requestId: request.id,
-        requestName: request.name
+    runner.on('beforeRequest', (payload: EventPayloads['beforeRequest']) => {
+      this.addMessage(LogLevel.INFO, 'system', `Executing: ${payload.request.name}`, {
+        requestId: payload.request.id,
+        requestName: payload.request.name
       });
     });
 
-    runner.on('afterRequest', ({ request, response, duration }: any) => {
-      const status = response.status?.code || response.status;
+    runner.on('afterRequest', (payload: EventPayloads['afterRequest']) => {
+      const summary = payload.response.summary;
+      const statusCode = summary.code ?? 'n/a';
+      const statusLabel = summary.label ?? '';
+      const status = `${String(statusCode)} ${statusLabel}`.trim();
       this.addMessage(
-        'info',
+        LogLevel.INFO,
         'network',
-        `${request.name} to ${status} (${duration}ms)`,
+        `${payload.request.name} to ${status} (${payload.duration}ms)`,
         {
-          requestId: request.id,
-          requestName: request.name,
-          data: { status, duration }
+          requestId: payload.request.id,
+          requestName: payload.request.name,
+          data: { status, duration: payload.duration }
         }
       );
     });
 
-    runner.on('assertion', ({ name, passed, error }: any) => {
+    runner.on('assertion', (payload: EventPayloads['assertion']) => {
+      const passed = payload.test.passed === true;
+      const error = payload.test.error;
       this.addMessage(
-        passed ? 'log' : 'error',
+        passed ? LogLevel.TRACE : LogLevel.ERROR,
         'test',
-        `${passed ? 'PASS' : 'FAIL'}: ${name}${error ? `: ${error}` : ''}`,
+        `${passed ? 'PASS' : 'FAIL'}: ${payload.test.name}${typeof error === 'string' && error.length > 0 ? `: ${error}` : ''}`,
         { data: { passed, error } }
       );
     });
 
-    runner.on('exception', ({ error, phase, request }: any) => {
+    runner.on('exception', (payload: EventPayloads['exception']) => {
       this.addMessage(
-        'error',
+        LogLevel.ERROR,
         'system',
-        `Error in ${phase}: ${error.message}`,
+        `Error in ${payload.phase}: ${payload.error.message}`,
         {
-          requestId: request?.id,
-          requestName: request?.name,
-          stackTrace: error.stack,
-          data: error
+          requestId: payload.request?.id,
+          requestName: payload.request?.name,
+          stackTrace: payload.error.stack,
+          data: payload.error
         }
       );
     });
 
-    runner.on('beforePreScript', ({ request }: any) => {
-      this.addMessage('debug', 'script', `Running pre-request script for ${request.name}`, {
-        requestId: request.id,
+    runner.on('beforePreScript', (payload: EventPayloads['beforePreScript']) => {
+      this.addMessage(LogLevel.DEBUG, 'script', `Running pre-request script for ${payload.request.name}`, {
+        requestId: payload.request.id,
         scriptType: 'pre-request'
       });
     });
 
-    runner.on('beforePostScript', ({ request }: any) => {
-      this.addMessage('debug', 'script', `Running post-request script for ${request.name}`, {
-        requestId: request.id,
+    runner.on('beforePostScript', (payload: EventPayloads['beforePostScript']) => {
+      this.addMessage(LogLevel.DEBUG, 'script', `Running post-request script for ${payload.request.name}`, {
+        requestId: payload.request.id,
         scriptType: 'post-request'
       });
     });
@@ -163,15 +169,17 @@ export class ConsoleService extends EventEmitter {
       }
 
       // Filter by search text
-      if (this.state.filter.searchText) {
-        const search = this.state.filter.searchText.toLowerCase();
+      const searchText = this.state.filter.searchText;
+      if (typeof searchText === 'string' && searchText.length > 0) {
+        const search = searchText.toLowerCase();
         if (!msg.message.toLowerCase().includes(search)) {
           return false;
         }
       }
 
       // Filter by request ID
-      if (this.state.filter.requestId && msg.requestId !== this.state.filter.requestId) {
+      const requestIdFilter = this.state.filter.requestId;
+      if (typeof requestIdFilter === 'string' && requestIdFilter.length > 0 && msg.requestId !== requestIdFilter) {
         return false;
       }
 

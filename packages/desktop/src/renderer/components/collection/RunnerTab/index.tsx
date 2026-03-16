@@ -1,5 +1,5 @@
 // RunnerTab - Collection runner with configuration and request selection (config-only)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { RunnerConfig } from './RunnerConfig';
 import { RequestList } from './RequestList';
 import { useTabNavigation, useWorkspace } from '../../../contexts';
@@ -9,8 +9,6 @@ interface RunnerTabProps {
   collection: any;
   onChange: (collection: any) => void;
   workspace: any;
-  initialSelectedRequests?: string[];
-  initialConfig?: Partial<RunnerTabConfig>;
   onRun?: (payload: {
     collectionId: string;
     collectionName: string;
@@ -20,7 +18,7 @@ interface RunnerTabProps {
   }) => void;
 }
 
-type RunnerTabConfig = {
+export type RunnerTabConfig = {
   environmentId?: string;
   iterations: number;
   delay: number;
@@ -32,6 +30,12 @@ type RunnerTabConfig = {
   persistVariables: boolean;
   saveResponses: boolean;
 };
+
+// Runner state stored in collection._runnerState so it survives tab switches.
+export interface RunnerState {
+  selectedRequests: string[];
+  config: Omit<RunnerTabConfig, 'dataFile'>; // File cannot be serialized; omit from persisted state
+}
 
 // Helper to get all request IDs from collection
 function getAllRequestIds(items: any[]): string[] {
@@ -46,47 +50,59 @@ function getAllRequestIds(items: any[]): string[] {
   return ids;
 }
 
-export function RunnerTab({ collection, onChange, workspace, initialSelectedRequests, initialConfig, onRun }: RunnerTabProps) {
+export function RunnerTab({ collection, onChange, workspace, onRun }: RunnerTabProps) {
   const { openRunnerExecution } = useTabNavigation();
   const { activeEnvironment } = useWorkspace();
+
+  // Restore persisted runner state from collection._runnerState (set by a previous tab switch).
+  const persistedState = collection?._runnerState as RunnerState | undefined;
+
   const [selectedRequests, setSelectedRequests] = useState<string[]>([]);
   
-  // Initialize with all requests selected
+  // Initialize with all requests selected (or restored from persisted state).
   useEffect(() => {
     if (collection?.items) {
       const allIds = getAllRequestIds(collection.items);
-      const initialSelection = initialSelectedRequests !== undefined ? initialSelectedRequests : allIds;
+      const initialSelection = persistedState?.selectedRequests ?? allIds;
       setSelectedRequests(initialSelection);
     }
-  }, [collection?.id, initialSelectedRequests]); // Re-init if collection changes
-  
+  }, [collection?.id]); // Re-init only when the collection identity changes
+
   // Check if parallel execution is allowed in collection
   const allowParallel = collection?.options?.execution?.allowParallel === true;
   const maxConcurrency = collection?.options?.execution?.maxConcurrency;
-  
+
   const [runConfig, setRunConfig] = useState<RunnerTabConfig>({
-    environmentId: initialConfig?.environmentId ?? (activeEnvironment?.id || undefined),
-    iterations: initialConfig?.iterations ?? 1,
-    delay: initialConfig?.delay ?? 0,
-    parallel: initialConfig?.parallel ?? false,
-    concurrency: initialConfig?.concurrency ?? 1,
+    environmentId: persistedState?.config.environmentId ?? (activeEnvironment?.id ?? undefined),
+    iterations: persistedState?.config.iterations ?? 1,
+    delay: persistedState?.config.delay ?? 0,
+    parallel: persistedState?.config.parallel ?? false,
+    concurrency: persistedState?.config.concurrency ?? 1,
     allowParallel: allowParallel,
     maxConcurrency: maxConcurrency,
-    dataFile: initialConfig?.dataFile ?? null,
-    persistVariables: initialConfig?.persistVariables ?? false,
-    saveResponses: initialConfig?.saveResponses ?? false
+    dataFile: null,
+    persistVariables: persistedState?.config.persistVariables ?? false,
+    saveResponses: persistedState?.config.saveResponses ?? false
   });
 
-  useEffect(() => {
-    if (initialConfig) {
-      setRunConfig(prev => ({
-        ...prev,
-        ...initialConfig,
-        allowParallel,
-        maxConcurrency
-      }));
-    }
-  }, [initialConfig, allowParallel, maxConcurrency]);
+  // Keep stable refs so the bubble-up effects always read the latest values.
+  const selectedRequestsRef = useRef(selectedRequests);
+  const runConfigRef = useRef(runConfig);
+  useEffect(() => { selectedRequestsRef.current = selectedRequests; }, [selectedRequests]);
+  useEffect(() => { runConfigRef.current = runConfig; }, [runConfig]);
+
+  // Bubble runner state up to CollectionEditor via onChange so it is stored in
+  // collection._runnerState and preserved by setTabEditorState on every change.
+  const bubbleRunnerState = (nextSelected: string[], nextConfig: RunnerTabConfig) => {
+    const { dataFile: _omit, ...serializableConfig } = nextConfig;
+    onChange({
+      ...collection,
+      _runnerState: {
+        selectedRequests: nextSelected,
+        config: serializableConfig
+      }
+    });
+  };
 
   useEffect(() => {
     setRunConfig(prev => ({
@@ -100,9 +116,19 @@ export function RunnerTab({ collection, onChange, workspace, initialSelectedRequ
   useEffect(() => {
     setRunConfig(prev => ({
       ...prev,
-      environmentId: activeEnvironment?.id || undefined
+      environmentId: activeEnvironment?.id ?? undefined
     }));
   }, [activeEnvironment?.id]);
+
+  const handleSelectionChange = (nextSelected: string[]) => {
+    setSelectedRequests(nextSelected);
+    bubbleRunnerState(nextSelected, runConfigRef.current);
+  };
+
+  const handleConfigChange = (nextConfig: RunnerTabConfig) => {
+    setRunConfig(nextConfig);
+    bubbleRunnerState(selectedRequestsRef.current, nextConfig);
+  };
 
   const handleRunCollection = () => {
     if (!workspace || !collection) return;
@@ -158,7 +184,7 @@ export function RunnerTab({ collection, onChange, workspace, initialSelectedRequ
           <RequestList
             collection={collection}
             selectedRequests={selectedRequests}
-            onSelectionChange={setSelectedRequests}
+            onSelectionChange={handleSelectionChange}
             isRunning={false}
           />
         </div>
@@ -167,7 +193,7 @@ export function RunnerTab({ collection, onChange, workspace, initialSelectedRequ
         <div style={{ width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <RunnerConfig
             config={runConfig}
-            onChange={setRunConfig}
+            onChange={handleConfigChange}
           />
           
           {/* Run Controls */}

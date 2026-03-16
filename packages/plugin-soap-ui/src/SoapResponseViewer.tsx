@@ -11,7 +11,7 @@ import * as RT from '@radix-ui/themes';
  *   - Parsed body section — pretty JSON tree of the parsed SOAP body
  *   - Raw XML section — Monaco editor with XML syntax highlighting
  */
-export function SoapResponseViewer({ response, uiContext, uiState }: ResponseTabProps) {
+export function SoapResponseViewer({ response, uiContext, uiState }: ResponseTabProps): React.ReactElement {
   const { Monaco } = uiContext;
   const [activeView, setActiveView] = React.useState<'parsed' | 'raw'>('parsed');
 
@@ -21,7 +21,7 @@ export function SoapResponseViewer({ response, uiContext, uiState }: ResponseTab
   const rawXml = soapData?.body ?? '';
   const parsed = soapData?.parsed;
 
-  if (!response) {
+  if (response === null) {
     return (
       <RT.Flex align="center" justify="center" height="100%" style={{ color: 'var(--gray-9)' }}>
         <RT.Text size="2" color="gray">No response yet. Send the request to see SOAP details.</RT.Text>
@@ -37,15 +37,15 @@ export function SoapResponseViewer({ response, uiContext, uiState }: ResponseTab
           <RT.Callout.Root color="red" size="2">
             <RT.Callout.Text>
               <strong>SOAP Fault</strong>
-              {fault?.code && (
+              {fault?.code !== undefined && fault.code.trim() !== '' && (
                 <span style={{ marginLeft: 12 }}>
                   Code: <code style={{ fontFamily: 'var(--font-mono)' }}>{fault.code}</code>
                 </span>
               )}
-              {fault?.reason && (
+              {fault?.reason !== undefined && fault.reason.trim() !== '' && (
                 <span style={{ marginLeft: 12 }}>— {fault.reason}</span>
               )}
-              {fault?.detail && (
+              {fault?.detail !== undefined && fault.detail.trim() !== '' && (
                 <div style={{ marginTop: 4, fontSize: 12, fontFamily: 'var(--font-mono)' }}>
                   Detail: {fault.detail}
                 </div>
@@ -97,16 +97,8 @@ export function SoapResponseViewer({ response, uiContext, uiState }: ResponseTab
   );
 }
 
-function ParsedBodyView({ parsed }: { parsed: unknown }) {
+function ParsedBodyView({ parsed }: { parsed: unknown }): React.ReactElement {
   const [expanded, setExpanded] = React.useState(true);
-
-  if (parsed === null || parsed === undefined) {
-    return (
-      <RT.Flex align="center" justify="center" height="100%" p="4">
-        <RT.Text size="2" color="gray">No parsed body available.</RT.Text>
-      </RT.Flex>
-    );
-  }
 
   const formatted = React.useMemo(() => {
     try {
@@ -115,6 +107,14 @@ function ParsedBodyView({ parsed }: { parsed: unknown }) {
       return String(parsed);
     }
   }, [parsed]);
+
+  if (parsed === null || parsed === undefined) {
+    return (
+      <RT.Flex align="center" justify="center" height="100%" p="4">
+        <RT.Text size="2" color="gray">No parsed body available.</RT.Text>
+      </RT.Flex>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

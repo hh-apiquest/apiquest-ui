@@ -16,7 +16,7 @@ import type { WsdlFieldSchema, WsdlUIState } from './types.js';
  *   Monaco XML editor for the full SOAP envelope.
  *   Exposes explicit SOAP version selector (1.1 / 1.2) since no WSDL binding is available.
  */
-export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
+export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps): React.ReactElement {
   const { Monaco } = uiContext;
   const data = request.data as unknown as SoapRequestData & { _ui?: { wsdlState?: WsdlUIState; [k: string]: unknown } };
   const bodyMode = data.body?.mode ?? 'operation';
@@ -32,7 +32,7 @@ export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
   const selectedOperation = selectedPort?.operations.find(o => o.name === data.operation);
   const inputSchema: WsdlFieldSchema[] = selectedOperation?.inputSchema ?? [];
 
-  function setMode(newMode: 'operation' | 'raw') {
+  function setMode(newMode: 'operation' | 'raw'): void {
     onChange({
       ...request,
       data: {
@@ -45,14 +45,14 @@ export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
     });
   }
 
-  function handleRawChange(value: string) {
+  function handleRawChange(value: string): void {
     onChange({
       ...request,
       data: { ...data, body: { mode: 'raw', raw: value } },
     });
   }
 
-  function handleArgChange(fieldName: string, value: string) {
+  function handleArgChange(fieldName: string, value: string): void {
     onChange({
       ...request,
       data: {
@@ -65,7 +65,7 @@ export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
     });
   }
 
-  function handleVersionChange(v: '1.1' | '1.2') {
+  function handleVersionChange(v: '1.1' | '1.2'): void {
     onChange({ ...request, data: { ...data, soapVersion: v } });
   }
 
@@ -126,8 +126,8 @@ export function BodyTab({ request, onChange, uiContext, uiState }: UITabProps) {
             inputSchema={inputSchema}
             args={args}
             onArgChange={handleArgChange}
-            hasOperation={!!data.operation}
-            hasWsdl={!!data.wsdl}
+            hasOperation={data.operation !== undefined && data.operation.trim() !== ''}
+            hasWsdl={data.wsdl !== undefined && data.wsdl.trim() !== ''}
           />
         )}
       </div>
@@ -147,7 +147,7 @@ function OperationArgsForm({
   onArgChange: (name: string, value: string) => void;
   hasOperation: boolean;
   hasWsdl: boolean;
-}) {
+}): React.ReactElement {
   if (!hasWsdl) {
     return (
       <RT.Flex align="center" justify="center" height="100%" p="4">
@@ -181,7 +181,7 @@ function OperationArgsForm({
             value={JSON.stringify(args, null, 2)}
             onChange={(e) => {
               try {
-                const parsed = JSON.parse((e.target as HTMLTextAreaElement).value);
+                const parsed: unknown = JSON.parse((e.target as HTMLTextAreaElement).value);
                 // We can't call onArgChange for all at once; handle via parent if needed
                 // For now just show the editor
                 void parsed;
@@ -220,8 +220,9 @@ function FieldRow({
   field: WsdlFieldSchema;
   value: string;
   onChange: (val: string) => void;
-}) {
-  const isComplex = field.type === 'complex' || (field.children && field.children.length > 0);
+}): React.ReactElement {
+  const hasChildren = Array.isArray(field.children) && field.children.length > 0;
+  const isComplex = field.type === 'complex' || hasChildren;
 
   return (
     <RT.Flex direction="column" gap="1">

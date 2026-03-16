@@ -1,14 +1,15 @@
 // ConsolePanel - Compact bottom panel with Console/Network/Tests tabs
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LogLevel } from '@apiquest/types';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { TrashIcon, ChevronUpIcon, ChevronDownIcon, EllipsisVerticalIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useConsole, useNetwork } from '../../contexts';
 import { ObjectViewer } from '../shared/ObjectViewer';
-import type { ConsoleMessageLevel } from '../../types/console';
 import type { NetworkEntry } from '../../types/network';
 import { buildResponseRaw, buildSummary } from '../../utils/responseAdapters';
 import { pluginLoader } from '../../services';
+import { logLevelToColor, logLevelToLabel } from '../../utils/logLevel';
 
 interface ConsolePanelProps {
   isMinimized?: boolean;
@@ -23,8 +24,8 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
   const [showTimestamps, setShowTimestamps] = useState(true);
   const [showLevels, setShowLevels] = useState(false);
   const [showPrettyJson, setShowPrettyJson] = useState(true);
-  const levelOptions: ConsoleMessageLevel[] = useMemo(
-    () => ['log', 'info', 'warn', 'error'],
+  const levelOptions: LogLevel[] = useMemo(
+    () => [LogLevel.TRACE, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR],
     []
   );
 
@@ -42,7 +43,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
     }
   };
 
-  const toggleLevel = (level: ConsoleMessageLevel) => {
+  const toggleLevel = (level: LogLevel) => {
     const nextLevels = filter.levels.includes(level)
       ? filter.levels.filter(l => l !== level)
       : [...filter.levels, level];
@@ -145,7 +146,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
                       <DropdownMenu.ItemIndicator>
                         <CheckIcon className="w-3 h-3" />
                       </DropdownMenu.ItemIndicator>
-                      {level}
+                      {logLevelToLabel(level)}
                     </DropdownMenu.CheckboxItem>
                   ))}
                 </DropdownMenu.Content>
@@ -245,12 +246,12 @@ function ConsoleTab({
               <span style={{ color: 'var(--gray-9)' }}>{msg.timestamp.toLocaleTimeString()}</span>
             )}
             {showLevels && (
-              <span style={{ color: getLogColor(msg.level) }}>[{msg.level}]</span>
+              <span style={{ color: logLevelToColor(msg.level) }}>[{logLevelToLabel(msg.level)}]</span>
             )}
             {parsedJson ? (
               <ObjectViewer data={parsedJson} />
             ) : (
-              <span style={{ color: getLogColor(msg.level) }}>{msg.message}</span>
+              <span style={{ color: logLevelToColor(msg.level) }}>{msg.message}</span>
             )}
           </div>
         );
@@ -760,11 +761,3 @@ function renderDetailView(entry: NetworkEntry) {
   );
 }
 
-function getLogColor(level: string): string {
-  switch (level) {
-    case 'error': return '#ef4444';
-    case 'warn': return '#f59e0b';
-    case 'info': return '#3b82f6';
-    default: return 'var(--gray-10)';
-  }
-}

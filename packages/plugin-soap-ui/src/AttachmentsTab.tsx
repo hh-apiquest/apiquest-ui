@@ -11,15 +11,15 @@ import * as RT from '@radix-ui/themes';
  *
  * Persists to request.data.attachments.
  */
-export function AttachmentsTab({ request, onChange }: UITabProps) {
+export function AttachmentsTab({ request, onChange }: UITabProps): React.ReactElement {
   const data = request.data as unknown as SoapRequestData;
   const attachments: SoapAttachment[] = data.attachments ?? [];
 
-  function updateAttachments(updated: SoapAttachment[]) {
+  function updateAttachments(updated: SoapAttachment[]): void {
     onChange({ ...request, data: { ...data, attachments: updated } });
   }
 
-  function handleAdd() {
+  function handleAdd(): void {
     const newAttachment: SoapAttachment = {
       contentId: `attachment-${Date.now()}`,
       contentType: 'application/octet-stream',
@@ -29,32 +29,41 @@ export function AttachmentsTab({ request, onChange }: UITabProps) {
     updateAttachments([...attachments, newAttachment]);
   }
 
-  function handleRemove(index: number) {
+  function handleRemove(index: number): void {
     updateAttachments(attachments.filter((_, i) => i !== index));
   }
 
-  function handleFieldChange(index: number, field: keyof SoapAttachment, value: string) {
+  function handleFieldChange(index: number, field: keyof SoapAttachment, value: string): void {
     updateAttachments(
       attachments.map((att, i) => i === index ? { ...att, [field]: value } : att)
     );
   }
 
-  function handleFileUpload(index: number, e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function handleFileUpload(index: number, e: React.ChangeEvent<HTMLInputElement>): void {
+    const file: File | undefined = e.target.files?.[0];
+    if (file === undefined) {
+      return;
+    }
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      const result = evt.target?.result as string;
+    reader.onload = (evt: ProgressEvent<FileReader>): void => {
+      const result = evt.target?.result;
+      if (typeof result !== 'string') {
+        return;
+      }
+
       // Strip the data URL prefix: "data:...;base64," 
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      const base64Marker = result.indexOf(',');
+      const base64 = base64Marker >= 0 ? result.slice(base64Marker + 1) : result;
+      const contentType = file.type.trim() !== '' ? file.type : 'application/octet-stream';
+
       updateAttachments(
         attachments.map((att, i) =>
           i === index
             ? {
                 ...att,
                 filename: file.name,
-                contentType: file.type || 'application/octet-stream',
+                contentType,
                 contentBase64: base64 ?? '',
               }
             : att
@@ -122,7 +131,7 @@ export function AttachmentsTab({ request, onChange }: UITabProps) {
               <RT.Text size="1" weight="bold" color="gray">File</RT.Text>
               <RT.Flex gap="2" align="center">
                 <RT.Text size="1" color="gray" style={{ flex: 1 }}>
-                  {att.filename || 'No file selected'}
+                  {att.filename.trim() !== '' ? att.filename : 'No file selected'}
                 </RT.Text>
                 <label style={{ cursor: 'pointer' }}>
                   <RT.Button size="1" variant="soft" asChild>
@@ -137,7 +146,7 @@ export function AttachmentsTab({ request, onChange }: UITabProps) {
               </RT.Flex>
             </RT.Flex>
 
-            {att.contentBase64 && (
+            {att.contentBase64.trim() !== '' && (
               <RT.Flex align="center" gap="2">
                 <RT.Badge color="green" variant="soft" size="1">Encoded</RT.Badge>
                 <RT.Text size="1" color="gray">

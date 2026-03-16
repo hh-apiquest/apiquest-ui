@@ -15,7 +15,7 @@ function parseWsdlXml(xml: string): WsdlService[] {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xml, 'text/xml');
 
-    if (doc.querySelector('parsererror')) {
+    if (doc.querySelector('parsererror') !== null) {
       console.warn('[WsdlTab] WSDL XML parse error');
       return [];
     }
@@ -38,7 +38,7 @@ function parseWsdlXml(xml: string): WsdlService[] {
         const bindingEl = doc.querySelector(`binding[name="${localBinding}"]`);
 
         let soapVersion: '1.1' | '1.2' | 'unknown' = 'unknown';
-        if (bindingEl) {
+        if (bindingEl !== null) {
           // Heuristic: check child element local names for soap:binding or soap12:binding
           const bindingChildren = Array.from(bindingEl.children);
           for (const child of bindingChildren) {
@@ -55,7 +55,7 @@ function parseWsdlXml(xml: string): WsdlService[] {
         }
 
         const operations: WsdlOperation[] = [];
-        if (bindingEl) {
+        if (bindingEl !== null) {
           const opEls = Array.from(bindingEl.querySelectorAll('operation'));
           for (const opEl of opEls) {
             const opName = opEl.getAttribute('name') ?? 'unknown';
@@ -99,7 +99,7 @@ function parseWsdlXml(xml: string): WsdlService[] {
  * Persists to request.data: wsdl, service, port, operation, soapVersion, soapAction.
  * Transient WSDL tree stored in request.data._ui.wsdlState (not persisted to file).
  */
-export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
+export function WsdlTab({ request, onChange, uiContext }: UITabProps): React.ReactElement {
   const data = request.data as unknown as SoapRequestData & { _ui?: { wsdlState?: WsdlUIState } };
   const wsdlState: WsdlUIState = data._ui?.wsdlState ?? {};
 
@@ -126,7 +126,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
   const currentOperationObj: WsdlOperation | undefined = operations.find(o => o.name === selectedOperation);
 
   // Update transient wsdlState helper
-  function patchWsdlState(patch: Partial<WsdlUIState>) {
+  function patchWsdlState(patch: Partial<WsdlUIState>): void {
     onChange({
       ...request,
       data: {
@@ -140,21 +140,23 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
   }
 
   // Update request data fields helper
-  function patchData(patch: Partial<SoapRequestData>) {
+  function patchData(patch: Partial<SoapRequestData>): void {
     onChange({
       ...request,
       data: { ...data, ...patch },
     });
   }
 
-  async function handleLoadWsdl() {
+  async function handleLoadWsdl(): Promise<void> {
     const loc = wsdlUrl.trim();
-    if (!loc) return;
+    if (loc === '') {
+      return;
+    }
 
     patchWsdlState({ loading: true, error: undefined, services: [] });
 
     try {
-      if (!uiContext.host) {
+      if (uiContext.host === undefined) {
         throw new Error('Host bridge not available. This plugin requires desktop v1.x or later.');
       }
 
@@ -185,8 +187,10 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
     }
   }
 
-  async function handlePickWsdlFile() {
-    if (!uiContext.host) return;
+  async function handlePickWsdlFile(): Promise<void> {
+    if (uiContext.host === undefined) {
+      return;
+    }
 
     // 1. Show file picker — host grants the path and returns it allowlisted
     const paths = await uiContext.host.showOpenDialog({
@@ -198,9 +202,14 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       ],
     });
 
-    if (!paths || paths.length === 0) return;
+    if (paths === null || paths.length === 0) {
+      return;
+    }
 
     const filePath = paths[0];
+    if (filePath === undefined) {
+      return;
+    }
     // Show the selected path in the URL field and trigger load
     patchData({ wsdl: filePath });
     patchWsdlState({ loading: true, error: undefined, services: [] });
@@ -231,7 +240,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
     }
   }
 
-  function handleServiceChange(svcName: string) {
+  function handleServiceChange(svcName: string): void {
     onChange({
       ...request,
       data: {
@@ -244,7 +253,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
     });
   }
 
-  function handlePortChange(portName: string) {
+  function handlePortChange(portName: string): void {
     onChange({
       ...request,
       data: {
@@ -256,7 +265,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
     });
   }
 
-  function handleOperationChange(opName: string) {
+  function handleOperationChange(opName: string): void {
     const op = operations.find(o => o.name === opName);
     const derivedVersion = op?.soapVersion === '1.1' || op?.soapVersion === '1.2'
       ? op.soapVersion
@@ -277,8 +286,9 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
     });
   }
 
-  function handleSoapActionChange(val: string) {
-    patchData({ soapAction: val || undefined });
+  function handleSoapActionChange(val: string): void {
+    const trimmed = val.trim();
+    patchData({ soapAction: trimmed !== '' ? val : undefined });
   }
 
   return (
@@ -294,11 +304,13 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
             size="2"
             style={{ flex: 1 }}
           />
-          {uiContext.host && (
+          {uiContext.host !== undefined && (
             <RT.Button
               size="2"
               variant="outline"
-              onClick={handlePickWsdlFile}
+              onClick={() => {
+                void handlePickWsdlFile();
+              }}
               disabled={loading}
             >
               Browse
@@ -307,8 +319,10 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
           <RT.Button
             size="2"
             variant="solid"
-            onClick={handleLoadWsdl}
-            disabled={loading || !wsdlUrl.trim()}
+            onClick={() => {
+              void handleLoadWsdl();
+            }}
+            disabled={loading || wsdlUrl.trim() === ''}
           >
             {loading ? 'Loading...' : 'Load WSDL'}
           </RT.Button>
@@ -316,7 +330,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       </RT.Flex>
 
       {/* Error display */}
-      {loadError && (
+      {loadError !== null && loadError.trim() !== '' && (
         <RT.Callout.Root color="red" size="1">
           <RT.Callout.Text>{loadError}</RT.Callout.Text>
         </RT.Callout.Root>
@@ -342,7 +356,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* Port selector */}
-      {selectedService && ports.length > 0 && (
+      {selectedService.trim() !== '' && ports.length > 0 && (
         <RT.Flex direction="column" gap="1">
           <RT.Text size="1" weight="bold" color="gray">Port / Binding</RT.Text>
           <RT.Select.Root
@@ -361,7 +375,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* Operation selector */}
-      {selectedPort && operations.length > 0 && (
+      {selectedPort.trim() !== '' && operations.length > 0 && (
         <RT.Flex direction="column" gap="1">
           <RT.Text size="1" weight="bold" color="gray">Operation</RT.Text>
           <RT.Select.Root
@@ -380,7 +394,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* Binding-derived SOAP version display */}
-      {currentOperationObj && (
+      {currentOperationObj !== undefined && (
         <RT.Flex direction="column" gap="1">
           <RT.Text size="1" weight="bold" color="gray">SOAP Version (from binding)</RT.Text>
           <RT.Flex align="center" gap="2">
@@ -404,7 +418,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* SOAPAction display / override */}
-      {selectedOperation && (
+      {selectedOperation.trim() !== '' && (
         <RT.Flex direction="column" gap="1">
           <RT.Flex align="center" gap="2">
             <RT.Text size="1" weight="bold" color="gray">SOAPAction</RT.Text>
@@ -420,7 +434,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* Empty state */}
-      {!loading && services.length === 0 && !loadError && !wsdlUrl && (
+      {!loading && services.length === 0 && loadError === null && wsdlUrl.trim() === '' && (
         <RT.Flex align="center" justify="center" py="8">
           <RT.Text size="2" color="gray">
             Enter a WSDL URL or file path above and click Load WSDL to discover available operations.
@@ -429,7 +443,7 @@ export function WsdlTab({ request, onChange, uiContext }: UITabProps) {
       )}
 
       {/* No-WSDL hint when URL is set but not yet loaded */}
-      {!loading && services.length === 0 && !loadError && wsdlUrl && (
+      {!loading && services.length === 0 && loadError === null && wsdlUrl.trim() !== '' && (
         <RT.Flex align="center" justify="center" py="4">
           <RT.Text size="2" color="gray">
             Click Load WSDL to parse the service contract.

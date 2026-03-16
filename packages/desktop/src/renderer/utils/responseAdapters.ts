@@ -4,7 +4,7 @@ import type { IProtocolPluginUI, SummaryLineComponent, SummaryField, RequestSumm
 const DefaultSummaryLine: SummaryLineComponent = ({ request, response }) => {
   const summary = response?.summary;
   const status = summary?.code ?? summary?.label ?? summary?.message ?? 'Complete';
-  const requestName = request?.name || '';
+  const requestName = request?.name ?? '';
   return [requestName, status].filter(Boolean).join(' - ');
 };
 
@@ -26,8 +26,8 @@ export function buildSummary(request: Request, response?: ProtocolResponse, plug
   const summary = response?.summary;
 
   return {
-    statusLabel: summary?.code !== undefined ? String(summary.code) : (summary?.label || summary?.message || (response ? 'Complete' : 'Pending')),
-    statusDetail: summary?.message && summary?.message !== summary?.label ? summary?.message : undefined,
+    statusLabel: summary?.code !== undefined ? String(summary.code) : ((summary?.label ?? summary?.message) ?? (response !== null ? 'Complete' : 'Pending')),
+    statusDetail: summary?.message !== null && summary?.message !== summary?.label ? summary?.message : undefined,
     duration: summary?.duration,
     outcome: summary?.outcome,
     code: summary?.code,
@@ -40,6 +40,6 @@ export function buildSummary(request: Request, response?: ProtocolResponse, plug
 }
 
 export function buildResponseRaw(response: ProtocolResponse | null | undefined): unknown {
-  if (!response) return null;
+  if (response == null) return null;
   return response.data ?? null;
 }

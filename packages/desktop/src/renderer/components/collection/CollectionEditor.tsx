@@ -1,5 +1,5 @@
 // CollectionEditor - Editor for collection-level settings (Auth, Scripts, Runner)
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { pluginLoader } from '../../services';
 import { useTabEditorBridge, useTabStatusActions, useTabNavigation } from '../../contexts';
 import { useWorkspace, useTheme } from '../../contexts';
@@ -15,11 +15,13 @@ interface CollectionEditorProps {
 
 export function CollectionEditor({ tab }: CollectionEditorProps) {
   const { setDirty, setName } = useTabStatusActions();
-  const { registerSaveHandler } = useTabEditorBridge();
-  const { saveResourceState, clearResourceState, getResourceState, updateTabUIState } = useTabNavigation();
+  const { registerSaveHandler, registerDiscardHandler } = useTabEditorBridge();
+  const { saveResourceState, clearResourceState, getResourceState, updateTabUIState, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { workspace, updateCollection, clearCollectionCache, refreshWorkspace } = useWorkspace();
   const { actualTheme } = useTheme();
   const [collection, setCollection] = useState<any>(null);
+  // Stable ref so handleAutoSave never captures a stale collection closure.
+  const collectionRef = useRef<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab || 'auth');
   
@@ -39,6 +41,11 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     setActiveSubTab(newActiveSubTab);
   }, [tab.id, tab.uiState?.activeSubTab]);
 
+  // Keep collectionRef current so handleAutoSave and the save handler always read latest data.
+  useEffect(() => {
+    collectionRef.current = collection;
+  }, [collection]);
+
   // Load collection from workspace
   useEffect(() => {
     const loadCollection = async () => {
@@ -48,23 +55,31 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
         setIsLoading(true);
         const baseCollection = await window.quest.workspace.loadCollection(workspace.id, tab.resourceId);
         
-        // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
-        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+        // Primary: in-memory state from a previous tab switch.
+        // Secondary: IPC session state (app restart recovery).
+        const inMemoryState = getTabEditorState(tab.id) as any;
         
-        const finalCollection = {
-          ...baseCollection,
-          auth: sessionState?.auth ?? baseCollection.auth,
-          collectionPreScript: sessionState?.collectionPreScript ?? baseCollection.collectionPreScript ?? '',
-          collectionPostScript: sessionState?.collectionPostScript ?? baseCollection.collectionPostScript ?? '',
-          preRequestScript: sessionState?.preRequestScript ?? baseCollection.preRequestScript ?? '',
-          postRequestScript: sessionState?.postRequestScript ?? baseCollection.postRequestScript ?? ''
-        };
+        let finalCollection: any;
+        if (inMemoryState) {
+          finalCollection = inMemoryState;
+          setDirty(tab.id, true);
+        } else {
+          // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
+          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+          finalCollection = {
+            ...baseCollection,
+            auth: sessionState?.auth ?? baseCollection.auth,
+            collectionPreScript: sessionState?.collectionPreScript ?? baseCollection.collectionPreScript ?? '',
+            collectionPostScript: sessionState?.collectionPostScript ?? baseCollection.collectionPostScript ?? '',
+            preRequestScript: sessionState?.preRequestScript ?? baseCollection.preRequestScript ?? '',
+            postRequestScript: sessionState?.postRequestScript ?? baseCollection.postRequestScript ?? ''
+          };
+          if (sessionState) {
+            setDirty(tab.id, true);
+          }
+        }
         
         setCollection(finalCollection);
-        
-        if (sessionState) {
-          setDirty(tab.id, true);
-        }
       } catch (error) {
         console.error('Failed to load collection:', error);
       } finally {
@@ -80,9 +95,12 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     if (!workspace) return;
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!collection) return;
-      await updateCollection(tab.collectionId, collection);
+      if (!collectionRef.current) return;
+      // Strip transient in-memory fields before persisting to the collection file.
+      const { _runnerState: _rs, ...currentCollection } = collectionRef.current;
+      await updateCollection(tab.collectionId, currentCollection);
       setDirty(tab.id, false);
+      clearTabEditorState(tab.id);
       // refresh cache so editors reload the latest if reopened
       clearCollectionCache(tab.collectionId);
       await refreshWorkspace();
@@ -90,39 +108,54 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     });
 
     return unregister;
-  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, collection, updateCollection, setDirty, clearCollectionCache, refreshWorkspace, clearResourceState]);
+  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, updateCollection, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
 
-  // Auto-save to session state
+  // Stable auto-save callback — does NOT depend on `collection` state directly.
+  // Reads collectionRef.current to prevent useAutoSave's cleanup from firing on every change.
+  // _runnerState is NOT stored in IPC session (File objects can't serialize; use in-memory only).
   const handleAutoSave = useCallback(async () => {
-    if (!workspace || !collection) return;
+    if (!workspace || !collectionRef.current) return;
+    const currentCollection = collectionRef.current;
     
     try {
       // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
       await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
-        auth: collection.auth,
-        collectionPreScript: collection.collectionPreScript,
-        collectionPostScript: collection.collectionPostScript,
-        preRequestScript: collection.preRequestScript,
-        postRequestScript: collection.postRequestScript
+        auth: currentCollection.auth,
+        collectionPreScript: currentCollection.collectionPreScript,
+        collectionPostScript: currentCollection.collectionPostScript,
+        preRequestScript: currentCollection.preRequestScript,
+        postRequestScript: currentCollection.postRequestScript
+        // _runnerState intentionally omitted — in-memory only, not serialized to IPC session
       });
     } catch (error) {
       console.error('AutoSave failed:', error);
     }
-  }, [workspace, collection, tab.resourceId, saveResourceState]);
+  }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
 
-  const autoSave = useAutoSave({
+  const { trigger: triggerAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
-    delay: 2000,
+    delay: 1000,
     enabled: !!workspace && !!collection
   });
 
+  useEffect(() => {
+    const unregisterDiscard = registerDiscardHandler(tab.id, async () => {
+      clearTabEditorState(tab.id);
+      await cancelAutoSave();
+    });
+
+    return unregisterDiscard;
+  }, [registerDiscardHandler, tab.id, cancelAutoSave, clearTabEditorState]);
+
   const handleCollectionChange = (updatedCollection: any) => {
     setCollection(updatedCollection);
+    // Immediately store in in-memory tab state — primary persistence mechanism for tab switches.
+    setTabEditorState(tab.id, updatedCollection);
     setDirty(tab.id, true);
     if (updatedCollection?.info?.name) {
       setName(tab.id, updatedCollection.info.name);
     }
-    autoSave.trigger();
+    triggerAutoSave();
   };
 
   if (isLoading) {

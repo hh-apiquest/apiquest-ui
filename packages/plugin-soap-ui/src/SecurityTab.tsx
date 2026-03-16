@@ -13,19 +13,19 @@ import * as RT from '@radix-ui/themes';
  *
  * Persists to request.data.security.
  */
-export function SecurityTab({ request, onChange }: UITabProps) {
+export function SecurityTab({ request, onChange }: UITabProps): React.ReactElement {
   const data = request.data as unknown as SoapRequestData;
   const security: SoapSecurity = data.security ?? { mode: 'none' };
   const mode: SoapSecurityMode = security.mode;
 
-  function patchSecurity(patch: Partial<SoapSecurity>) {
+  function patchSecurity(patch: Partial<SoapSecurity>): void {
     onChange({
       ...request,
       data: { ...data, security: { ...security, ...patch } },
     });
   }
 
-  function handleModeChange(newMode: SoapSecurityMode) {
+  function handleModeChange(newMode: SoapSecurityMode): void {
     onChange({
       ...request,
       data: {

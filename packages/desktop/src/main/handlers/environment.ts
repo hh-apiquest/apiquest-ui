@@ -2,25 +2,44 @@
 import { ipcMain } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
+import type { Environment } from '@apiquest/types';
 import { workspaceRegistry } from './workspace.js';
 import { secretVariableService } from '../SecretVariableService.js';
 
-export function registerEnvironmentHandlers() {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseEnvironmentDocument(content: string): Environment {
+  const parsed = JSON.parse(content) as Environment;
+
+  if (typeof parsed.name !== 'string' || !isObjectRecord(parsed.variables)) {
+    throw new Error('Invalid environment file.');
+  }
+
+  return parsed;
+}
+
+export function registerEnvironmentHandlers(): void {
   ipcMain.handle('environment:load', async (_event, workspaceId: string, fileName: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const filePath = path.join(workspacePath, 'environments', `${fileName}.json`);
     const content = await fs.readFile(filePath, 'utf-8');
-    const environment = JSON.parse(content);
+    const environment = parseEnvironmentDocument(content);
     const environmentSecrets = await secretVariableService.getEnvironmentSecrets(workspaceId, fileName);
-    environment.variables = secretVariableService.hydrateVariables(environment.variables, environmentSecrets);
-    return environment;
+    const hydratedVariables = secretVariableService.hydrateVariables(environment.variables, environmentSecrets);
+
+    return {
+      ...environment,
+      variables: hydratedVariables
+    };
   });
 
-  ipcMain.handle('environment:save', async (_event, workspaceId: string, fileName: string, environment: any) => {
+  ipcMain.handle('environment:save', async (_event, workspaceId: string, fileName: string, environment: Environment) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const filePath = path.join(workspacePath, 'environments', `${fileName}.json`);
     const { sanitizedVariables, secrets } = secretVariableService.splitVariablesForSave(environment.variables);
@@ -36,7 +55,7 @@ export function registerEnvironmentHandlers() {
 
   ipcMain.handle('environment:create', async (_event, workspaceId: string, name: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const envFolder = path.join(workspacePath, 'environments');
     await fs.mkdir(envFolder, { recursive: true });
@@ -45,7 +64,7 @@ export function registerEnvironmentHandlers() {
     const fileName = `${sanitizedName}.json`;
     const filePath = path.join(envFolder, fileName);
     
-    const envData = {
+    const envData: Environment = {
       name: name.trim(),
       variables: {}
     };
@@ -56,7 +75,7 @@ export function registerEnvironmentHandlers() {
 
   ipcMain.handle('environment:rename', async (_event, workspaceId: string, oldFileName: string, newFileName: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const oldFilePath = path.join(workspacePath, 'environments', `${oldFileName}.json`);
     const sanitizedName = newFileName.trim().replace(/[^a-z0-9-_\s]/gi, '-');
@@ -68,7 +87,7 @@ export function registerEnvironmentHandlers() {
 
   ipcMain.handle('environment:delete', async (_event, workspaceId: string, fileName: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const filePath = path.join(workspacePath, 'environments', `${fileName}.json`);
     await fs.unlink(filePath);
@@ -77,11 +96,11 @@ export function registerEnvironmentHandlers() {
 
   ipcMain.handle('environment:duplicate', async (_event, workspaceId: string, sourceFileName: string, newFileName: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const sourceFilePath = path.join(workspacePath, 'environments', `${sourceFileName}.json`);
     const content = await fs.readFile(sourceFilePath, 'utf-8');
-    const data = JSON.parse(content);
+    const data = parseEnvironmentDocument(content);
     
     const sanitizedName = newFileName.trim().replace(/[^a-z0-9-_\s]/gi, '-');
     const newFilePath = path.join(workspacePath, 'environments', `${sanitizedName}.json`);

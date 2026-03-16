@@ -27,11 +27,11 @@ function findItemPath(
     
     if (item.type === 'folder') {
       const found = findItemPath(
-        (item as Folder).items,
+        item.items,
         targetId,
         [...currentPath, item]
       );
-      if (found) return found;
+      if (found != null) return found;
     }
   }
   return null;
@@ -43,7 +43,7 @@ function findItemPath(
  */
 function normalizeAuth(auth: Auth | undefined): Auth | null {
   // Missing auth or explicit 'inherit' should inherit
-  if (!auth || auth.type === 'inherit') {
+  if ((auth == null) || auth.type === 'inherit') {
     return null;
   }
   
@@ -66,7 +66,7 @@ export function resolveInheritedAuth(
   // Find the path to this item
   const path = findItemPath(collection.items, resourceId);
   
-  if (!path) {
+  if (path == null) {
     // Item not found, no inherited auth
     return { auth: null, source: null };
   }
@@ -78,7 +78,7 @@ export function resolveInheritedAuth(
     const parent = path[i] as Folder;
     const normalized = normalizeAuth(parent.auth);
     
-    if (normalized) {
+    if (normalized != null) {
       // Found explicit auth (could be 'none' which stops inheritance)
       return {
         auth: normalized,
@@ -92,7 +92,7 @@ export function resolveInheritedAuth(
   
   // Check collection-level auth
   const collectionAuth = normalizeAuth(collection.auth);
-  if (collectionAuth) {
+  if (collectionAuth != null) {
     return {
       auth: collectionAuth,
       source: {

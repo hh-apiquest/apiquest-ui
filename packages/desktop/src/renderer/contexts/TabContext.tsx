@@ -2,6 +2,7 @@
 // Layer: Contexts (React layer)
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode, useCallback } from 'react';
+import { LogLevel } from '@apiquest/types';
 import type { Request } from '../types/request';
 import { consoleService } from '../services';
 import type { TabSessionInfo, ResourceSessionState } from '../types/quest';
@@ -99,6 +100,11 @@ interface TabNavigationContextValue {
   
   // UI state management
   updateTabUIState: (tabId: string, uiState: Partial<EditorUIState>) => void;
+
+  // In-memory editor state (survives tab switches without IPC; primary source of truth for unsaved changes)
+  setTabEditorState: (tabId: string, state: unknown) => void;
+  getTabEditorState: (tabId: string) => unknown;
+  clearTabEditorState: (tabId: string) => void;
 }
 
 interface TabStatusStateContextValue {
@@ -113,7 +119,11 @@ interface TabStatusActionsContextValue {
 
 interface TabEditorBridgeContextValue {
   registerSaveHandler: (tabId: string, handler: () => Promise<void>) => () => void;
+  registerDiscardHandler: (tabId: string, handler: () => Promise<void>) => () => void;
+  registerFlushHandler: (tabId: string, handler: () => Promise<void>) => () => void;
   invokeSaveHandler: (tabId: string) => Promise<void>;
+  invokeFlushHandler: (tabId: string) => Promise<void>;
+  invokeDiscardHandler: (tabId: string) => Promise<void>;
 }
 
 const TabNavigationContext = createContext<TabNavigationContextValue | null>(null);
@@ -138,8 +148,17 @@ export function TabProvider({ children }: TabProviderProps) {
     badgeByTabId: {}
   });
 
-  // Editor save handlers (imperative registry; does not trigger renders)
+  // Editor save/discard/flush handlers (imperative registry; does not trigger renders)
   const saveHandlersRef = useRef<Map<string, () => Promise<void>>>(new Map());
+  const discardHandlersRef = useRef<Map<string, () => Promise<void>>>(new Map());
+  // Flush handlers are called before a tab switch to ensure any pending debounced
+  // auto-save is written to session state before the next tab mounts and reads it.
+  const flushHandlersRef = useRef<Map<string, () => Promise<void>>>(new Map());
+  // In-memory editor state per tab (survives tab switches without any IPC).
+  // This is the primary source of truth for unsaved changes between tab switches.
+  // The IPC session (saveResourceState) is kept as a secondary backup for app restarts.
+  // Using a ref map (not React state) avoids re-renders on every keystroke.
+  const tabEditorStateRef = useRef<Map<string, unknown>>(new Map());
 
   // Use useRef to maintain stable tab object references
   const tabsRef = useRef<Map<string, Tab>>(new Map());
@@ -523,6 +542,9 @@ export function TabProvider({ children }: TabProviderProps) {
       return { ...prev, isDirtyByTabId: dirtyRest, nameByTabId: nameRest, badgeByTabId: badgeRest };
     });
     saveHandlersRef.current.delete(tabId);
+    discardHandlersRef.current.delete(tabId);
+    flushHandlersRef.current.delete(tabId);
+    tabEditorStateRef.current.delete(tabId);
   }, [activeTabId]);
 
   // Status actions (editors call these; editors must NOT consume TabStatusState)
@@ -796,12 +818,66 @@ export function TabProvider({ children }: TabProviderProps) {
     };
   }, []);
 
+  const registerDiscardHandler = useCallback((tabId: string, handler: () => Promise<void>) => {
+    discardHandlersRef.current.set(tabId, handler);
+    return () => {
+      const current = discardHandlersRef.current.get(tabId);
+      if (current === handler) {
+        discardHandlersRef.current.delete(tabId);
+      }
+    };
+  }, []);
+
   const invokeSaveHandler = useCallback(async (tabId: string) => {
     const handler = saveHandlersRef.current.get(tabId);
     if (!handler) {
       throw new Error(`No save handler registered for tab: ${tabId}`);
     }
     await handler();
+  }, []);
+
+  const invokeDiscardHandler = useCallback(async (tabId: string) => {
+    const handler = discardHandlersRef.current.get(tabId);
+    if (!handler) {
+      return;
+    }
+    await handler();
+  }, []);
+
+  const registerFlushHandler = useCallback((tabId: string, handler: () => Promise<void>) => {
+    flushHandlersRef.current.set(tabId, handler);
+    return () => {
+      const current = flushHandlersRef.current.get(tabId);
+      if (current === handler) {
+        flushHandlersRef.current.delete(tabId);
+      }
+    };
+  }, []);
+
+  // Invoked by TabBar before switching to a different tab. If there is a pending
+  // debounced auto-save it is flushed synchronously so the session is up-to-date
+  // before the next tab mounts and reads it. No-ops when no flush handler is
+  // registered (e.g. collection/folder/runner tabs that have no auto-save).
+  const invokeFlushHandler = useCallback(async (tabId: string) => {
+    const handler = flushHandlersRef.current.get(tabId);
+    if (handler) {
+      await handler();
+    }
+  }, []);
+
+  // In-memory editor state — stored in a ref map so writes don't cause re-renders.
+  // This is the primary source of truth for unsaved request state during a session.
+  // The IPC session (saveResourceState) remains as a secondary backup for app restarts.
+  const setTabEditorState = useCallback((tabId: string, state: unknown) => {
+    tabEditorStateRef.current.set(tabId, state);
+  }, []);
+
+  const getTabEditorState = useCallback((tabId: string): unknown => {
+    return tabEditorStateRef.current.get(tabId);
+  }, []);
+
+  const clearTabEditorState = useCallback((tabId: string) => {
+    tabEditorStateRef.current.delete(tabId);
   }, []);
 
   const navValue: TabNavigationContextValue = useMemo(() => ({
@@ -823,8 +899,11 @@ export function TabProvider({ children }: TabProviderProps) {
     updateTabExecution,
     appendTabExecutionEvent,
     clearTabExecution,
-    updateTabUIState
-  }), [tabs, activeTabId, openRequest, openCollection, openFolder, openRunnerExecution, closeTab, clearTemporaryFlag, loadSession, saveSession, saveResourceState, clearResourceState, getResourceState, updateTabExecution, appendTabExecutionEvent, clearTabExecution, updateTabUIState]);
+    updateTabUIState,
+    setTabEditorState,
+    getTabEditorState,
+    clearTabEditorState
+  }), [tabs, activeTabId, openRequest, openCollection, openFolder, openRunnerExecution, closeTab, clearTemporaryFlag, loadSession, saveSession, saveResourceState, clearResourceState, getResourceState, updateTabExecution, appendTabExecutionEvent, clearTabExecution, updateTabUIState, setTabEditorState, getTabEditorState, clearTabEditorState]);
 
   const statusStateValue: TabStatusStateContextValue = useMemo(() => ({ status }), [status]);
 
@@ -836,8 +915,12 @@ export function TabProvider({ children }: TabProviderProps) {
 
   const bridgeValue: TabEditorBridgeContextValue = useMemo(() => ({
     registerSaveHandler,
-    invokeSaveHandler
-  }), [registerSaveHandler, invokeSaveHandler]);
+    registerDiscardHandler,
+    registerFlushHandler,
+    invokeSaveHandler,
+    invokeFlushHandler,
+    invokeDiscardHandler
+  }), [registerSaveHandler, registerDiscardHandler, registerFlushHandler, invokeSaveHandler, invokeFlushHandler, invokeDiscardHandler]);
 
   // Subscribe to execution events from main process
   useEffect(() => {
@@ -850,7 +933,7 @@ export function TabProvider({ children }: TabProviderProps) {
 
       if (event.type === 'console') {
         const message = event.data?.message ?? '';
-        const level = event.data?.level ?? 'log';
+        const level = event.data?.level ?? LogLevel.INFO;
         consoleService.addMessage(level, 'script', message);
       }
       

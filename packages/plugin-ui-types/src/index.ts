@@ -130,6 +130,27 @@ export interface ParamEntry {
 }
 
 /**
+ * Form-data editor row model used by plugin UI shared editors.
+ */
+export interface FormDataEntry {
+  key: string;
+  value: string;
+  type: 'text' | 'binary';
+  description?: string;
+  disabled?: boolean;
+}
+
+/**
+ * URL-encoded editor row model used by plugin UI shared editors.
+ */
+export interface UrlEncodedEntry {
+  key: string;
+  value: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+/**
  * Reactive UI State
  * Global app state that triggers re-renders when changed
  */
@@ -313,25 +334,14 @@ export interface PluginUIContext {
     
     // Form data editor (text/binary inputs)
     FormData: ComponentType<{
-      formData: Array<{
-        key: string;
-        value: string;
-        type: 'text' | 'binary';
-        description?: string;
-        disabled: boolean;
-      }>;
-      onChange: (formData: any[]) => void;
+      formData: FormDataEntry[];
+      onChange: (formData: FormDataEntry[]) => void;
     }>;
     
     // URL-encoded form data editor (key-value)
     UrlEncoded: ComponentType<{
-      data: Array<{
-        key: string;
-        value: string;
-        description?: string;
-        disabled: boolean;
-      }>;
-      onChange: (data: any[]) => void;
+      data: UrlEncodedEntry[];
+      onChange: (data: UrlEncodedEntry[]) => void;
     }>;
   };
   
@@ -543,7 +553,7 @@ export interface IAuthPluginUI {
    * Create default auth data
    * Used when user selects this auth type
    */
-  createDefault(): any;
+  createDefault(): unknown;
   
   /**
    * Render auth configuration form
@@ -553,8 +563,8 @@ export interface IAuthPluginUI {
    * @param options - Render options (e.g., readOnly for inherited auth display)
    */
   renderForm(
-    authData: any,
-    onChange: (data: any) => void,
+    authData: unknown,
+    onChange: (data: unknown) => void,
     options?: { readOnly?: boolean }
   ): ReactNode;
   
@@ -562,7 +572,7 @@ export interface IAuthPluginUI {
    * Validate auth data (optional)
    * Desktop can show validation errors
    */
-  validate?(authData: any): {
+  validate?(authData: unknown): {
     valid: boolean;
     errors?: string[];
   };
@@ -733,7 +743,7 @@ export interface RequestBadge {
 export interface ProtocolViewProps {
   request?: Request;
   response?: ProtocolResponse;
-  events?: any[];
+  events?: unknown[];
   uiContext: PluginUIContext;
   uiState: ReactiveUIState;
 }
@@ -813,13 +823,13 @@ export interface IImporterPluginUI {
    * Useful for auto-detecting format when user drags a file
    * @returns format string or null if cannot detect
    */
-  detectFormat?(data: string | any): string | null;
+  detectFormat?(data: string | unknown): string | null;
   
   /**
    * Validate import data before processing
    * Called before importCollection to ensure data is valid for the format
    */
-  validate(data: string | any, format: string): {
+  validate(data: string | unknown, format: string): {
     valid: boolean;
     errors?: string[];
     warnings?: string[];
@@ -833,19 +843,19 @@ export interface IImporterPluginUI {
    * @returns Collection object
    */
   importCollection(
-    data: string | any,
+    data: string | unknown,
     format: string,
     options?: {
       pluginSettings?: Record<string, unknown>;
       [key: string]: unknown;
     }
-  ): Promise<any>; // Returns Collection from @apiquest/types
+  ): Promise<unknown>; // Returns Collection from @apiquest/types
   
   /**
    * Get import options schema for a specific format
    * Defines what options the user can configure for import
    */
-  getOptionsSchema?(format: string): any;
+  getOptionsSchema?(format: string): unknown;
 }
 
 /**
@@ -892,16 +902,16 @@ export interface IExporterPluginUI {
    * @returns Exported data as string
    */
   exportCollection(
-    collection: any, // Collection from @apiquest/types
+    collection: unknown, // Collection from @apiquest/types
     format: string,
-    options?: any
+    options?: unknown
   ): Promise<string>;
   
   /**
    * Get export options schema for a specific format
    * Defines what options the user can configure for export
    */
-  getOptionsSchema?(format: string): any;
+  getOptionsSchema?(format: string): unknown;
   
   /**
    * Render custom export options UI (optional)
@@ -909,8 +919,8 @@ export interface IExporterPluginUI {
    */
   renderExportOptions?(
     format: string,
-    options: any,
-    onChange: (options: any) => void
+    options: unknown,
+    onChange: (options: unknown) => void
   ): ReactNode;
 }
 
@@ -941,15 +951,15 @@ export interface IVisualizerPluginUI {
    */
   renderVisualization(
     type: string,
-    data: any,
-    options?: any
+    data: unknown,
+    options?: unknown
   ): ReactNode;
   
   /**
    * Get options schema for a visualization type
    * Defines configuration options for the visualization
    */
-  getOptionsSchema?(type: string): any;
+  getOptionsSchema?(type: string): unknown;
 }
 
 /**
@@ -988,8 +998,8 @@ export interface IExtensionPluginUI {
       label: string;
       icon?: string;
       position?: number;
-      component: ComponentType<any>;
-      visible?: (context: any) => boolean;
+      component: ComponentType<unknown>;
+      visible?: (context: unknown) => boolean;
     }[];
   };
 }

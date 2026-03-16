@@ -19,12 +19,17 @@ interface RequestEditorProps {
 }
 
 export function RequestEditor({ tab }: RequestEditorProps) {
-  const { saveResourceState, clearResourceState, getResourceState, updateTabExecution, updateTabUIState, clearTemporaryFlag } = useTabNavigation();
+  const { saveResourceState, clearResourceState, getResourceState, updateTabExecution, updateTabUIState, clearTemporaryFlag, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { setDirty, setMetadata } = useTabStatusActions();
-  const { registerSaveHandler } = useTabEditorBridge();
+  const { registerSaveHandler, registerDiscardHandler, registerFlushHandler } = useTabEditorBridge();
   const { workspace, activeEnvironment, loadEnvironment, getCollection, updateRequest } = useWorkspace();
   const { actualTheme } = useTheme();
   const [request, setRequest] = useState<Request | null>(null);
+  // Stable ref so handleAutoSave never captures a stale request closure.
+  // Without this, every request state change recreates handleAutoSave → executeSave,
+  // causing useAutoSave's cleanup to fire on every keystroke, cancelling the timer
+  // and resetting hasPendingSaveRef.current — meaning flush() would always be a no-op.
+  const requestRef = useRef<Request | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [collectionItems, setCollectionItems] = useState<Array<{ id: string; name: string; type: 'folder' | 'request' }>>([]);
   
@@ -45,8 +50,8 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   );
   
   const execution = tab.execution;
-  const response = execution?.result;
-  const events = execution?.events || [];
+  const response = execution?.result ?? null;
+  const events = execution?.events ?? [];
 
   console.log('[RequestEditor] Render - execution state:', {
     hasExecution: !!execution,
@@ -167,26 +172,37 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         const baseRequest = findRequest(loadedCollection.items);
         if (!baseRequest) throw new Error('Request not found');
         
-        const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+        // Primary: in-memory state from a previous tab switch (zero IPC overhead, no races).
+        // Secondary: IPC session state (app restart recovery, or first load after restart).
+        const inMemoryState = getTabEditorState(tab.id) as Request | undefined;
         
-        const finalRequest: Request = {
-          type: 'request',
-          id: baseRequest.id,
-          name: sessionState?.name || baseRequest.name,
-          description: sessionState?.description || baseRequest.description || '',
-          data: sessionState?.data || baseRequest.data || {},
-          auth: sessionState?.auth ?? baseRequest.auth,
-          preRequestScript: sessionState?.preRequestScript ?? baseRequest.preRequestScript ?? '',
-          postRequestScript: sessionState?.postRequestScript ?? baseRequest.postRequestScript ?? '',
-          dependsOn: sessionState?.dependsOn ?? baseRequest.dependsOn,
-          condition: sessionState?.condition ?? baseRequest.condition
-        };
+        let finalRequest: Request;
+        if (inMemoryState) {
+          // Use the in-memory state directly — it is always the most recent version.
+          finalRequest = inMemoryState;
+          setDirty(tab.id, true);
+        } else {
+          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+          // Session data includes _ui directly (stored together).
+          // The collection file-save strips _ui before persisting (see registerSaveHandler).
+          finalRequest = {
+            type: 'request',
+            id: baseRequest.id,
+            name: sessionState?.name ?? baseRequest.name,
+            description: sessionState?.description ?? baseRequest.description ?? '',
+            data: (sessionState?.data as Record<string, unknown>) ?? (baseRequest.data as Record<string, unknown>) ?? {},
+            auth: sessionState?.auth ?? baseRequest.auth,
+            preRequestScript: sessionState?.preRequestScript ?? baseRequest.preRequestScript ?? '',
+            postRequestScript: sessionState?.postRequestScript ?? baseRequest.postRequestScript ?? '',
+            dependsOn: sessionState?.dependsOn ?? baseRequest.dependsOn,
+            condition: sessionState?.condition ?? baseRequest.condition
+          };
+          if (sessionState) {
+            setDirty(tab.id, true);
+          }
+        }
         
         setRequest(finalRequest);
-        
-        if (sessionState) {
-          setDirty(tab.id, true);
-        }
         
         // Set badge metadata from plugin
         if (pluginUI) {
@@ -206,54 +222,93 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     loadRequest();
   }, [tab.id, tab.resourceId, tab.collectionId]);
 
+  // Keep requestRef current so handleAutoSave and the save handler always read the
+  // latest request without re-creating their useCallback on every state change.
+  // If they depended on `request` directly, every user input would recreate
+  // executeSave, causing useAutoSave's cleanup to cancel the pending timer and reset
+  // hasPendingSaveRef.current — making flush() a no-op for the latest change.
+  useEffect(() => {
+    requestRef.current = request;
+  }, [request]);
+
   useEffect(() => {
     if (!workspace) return;
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!request) return;
-      // Strip transient _ui state before persisting to the collection file
-      const { _ui: _uiToStrip, ...persistData } = request.data as any;
-      const requestToSave = { ...request, data: persistData };
+      if (!requestRef.current) return;
+      const currentRequest = requestRef.current;
+      // Strip transient _ui state before persisting to the collection file.
+      // The session stores data+_ui together but the collection file must not.
+      const { _ui: _uiToStrip, ...persistData } = currentRequest.data as Record<string, unknown>;
+      const requestToSave = { ...currentRequest, data: persistData };
       await updateRequest(tab.collectionId, tab.resourceId, requestToSave);
       setDirty(tab.id, false);
+      clearTabEditorState(tab.id);
       await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
-  }, [registerSaveHandler, workspace, tab.id, tab.collectionId, tab.resourceId, request, updateRequest, setDirty, clearResourceState]);
+  }, [registerSaveHandler, workspace, tab.id, tab.collectionId, tab.resourceId, updateRequest, setDirty, clearResourceState]);
 
+  // Stable auto-save callback — does NOT depend on `request` state directly.
+  // It reads requestRef.current to always access the latest data. This stability
+  // prevents useAutoSave from resetting its pending-flag on every keystroke.
   const handleAutoSave = useCallback(async () => {
-    if (!workspace || !request) return;
+    if (!workspace || !requestRef.current) return;
+    const currentRequest = requestRef.current;
     
     try {
-      // Strip transient _ui state (headersRows etc.) from session auto-save as well.
-      // _ui is only held in React state; the session state should match what would be
-      // written to the collection file on explicit save.
-      const { _ui: _uiToStrip, ...persistData } = request.data as any;
+      // Store the full request.data (including _ui) in the session so that it is
+      // available on remount without a merge step. _ui is stripped only when
+      // saving to the collection file (see registerSaveHandler).
       await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
-        name: request.name,
-        description: request.description,
-        data: persistData,
+        name: currentRequest.name,
+        description: currentRequest.description,
+        data: currentRequest.data as Record<string, unknown>,
         // Normalize "inherit" to undefined - inherit is default behavior and shouldn't create session state
-        auth: request.auth?.type === 'inherit' ? undefined : request.auth,
-        preRequestScript: request.preRequestScript,
-        postRequestScript: request.postRequestScript,
-        dependsOn: request.dependsOn,
-        condition: request.condition
+        auth: currentRequest.auth?.type === 'inherit' ? undefined : currentRequest.auth,
+        preRequestScript: currentRequest.preRequestScript,
+        postRequestScript: currentRequest.postRequestScript,
+        dependsOn: currentRequest.dependsOn,
+        condition: currentRequest.condition
       });
     } catch (error) {
       console.error('AutoSave failed:', error);
     }
-  }, [workspace, request, tab.resourceId, saveResourceState]);
+  }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
 
-  const autoSave = useAutoSave({
+  const { trigger: triggerAutoSave, flush: flushAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
-    delay: 2000,
+    delay: 1000,
     enabled: !!workspace && !!request
   });
 
+  useEffect(() => {
+    const unregisterDiscard = registerDiscardHandler(tab.id, async () => {
+      clearTabEditorState(tab.id);
+      await cancelAutoSave();
+    });
+
+    return unregisterDiscard;
+  }, [registerDiscardHandler, tab.id, cancelAutoSave, clearTabEditorState]);
+
+  // Register a flush handler so TabBar can await a pending auto-save before
+  // switching tabs. This eliminates the IPC race between the debounced write
+  // (on the old tab) and the session read (on the new tab after remount).
+  useEffect(() => {
+    const unregisterFlush = registerFlushHandler(tab.id, async () => {
+      await flushAutoSave();
+    });
+
+    return unregisterFlush;
+  }, [registerFlushHandler, tab.id, flushAutoSave]);
+
   const handleRequestChange = (updatedRequest: Request) => {
     setRequest(updatedRequest);
+    // Immediately store the updated request in in-memory tab state.
+    // This is the primary mechanism for persisting state across tab switches.
+    // It is synchronous (no IPC) so there is no race condition.
+    setTabEditorState(tab.id, updatedRequest);
     setDirty(tab.id, true);
     
     // Make temporary tab permanent when data changes
@@ -267,7 +322,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       setMetadata(tab.id, { badge });
     }
     
-    autoSave.trigger();
+    triggerAutoSave();
   };
 
   const handleSend = async () => {
@@ -820,11 +875,17 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
             } else {
               // Concrete auth type
               const newAuthPluginUI = pluginLoader.getAuthPluginUI(value);
+              const createdAuthData = newAuthPluginUI?.createDefault ? newAuthPluginUI.createDefault() : {};
+              const normalizedAuthData: Record<string, unknown> =
+                typeof createdAuthData === 'object' && createdAuthData !== null
+                  ? (createdAuthData as Record<string, unknown>)
+                  : {};
+
               onChange({
                 ...request,
                 auth: {
                   type: value,
-                  data: newAuthPluginUI?.createDefault ? newAuthPluginUI.createDefault() : {}
+                  data: normalizedAuthData
                 }
               });
             }

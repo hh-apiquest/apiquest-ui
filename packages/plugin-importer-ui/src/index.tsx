@@ -1,14 +1,55 @@
 import React from 'react';
 import type { IImporterPluginUI, PluginUIContext } from '@apiquest/plugin-ui-types';
 
+import {
+  FILE_EXTENSIONS,
+  IMPORT_FORMATS,
+  detectImportFormat,
+  isImportFormat,
+  normalizeInputToText,
+  type ImportFormat,
+} from './importer/formats';
+
 type ImporterPluginSettings = {
   enableAIScriptAssist?: boolean;
+  showAdvancedScriptOptions?: boolean;
+  scriptConversionMode?: 'rule' | 'ai';
+  strictScriptConversion?: boolean;
+  aiPrompt?: string;
 };
 
-let UI: PluginUIContext;
+type ImportCollectionOptions = {
+  pluginSettings?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+type ImportValidationResult = {
+  valid: boolean;
+  errors?: string[];
+  warnings?: string[];
+};
+
+let uiContext: PluginUIContext | null = null;
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function getSettings(pluginSettings: Record<string, unknown> | undefined): ImporterPluginSettings {
+  const scriptConversionMode =
+    pluginSettings?.scriptConversionMode === 'ai' || pluginSettings?.scriptConversionMode === 'rule'
+      ? pluginSettings.scriptConversionMode
+      : 'rule';
+
+  const aiPrompt = typeof pluginSettings?.aiPrompt === 'string' ? pluginSettings.aiPrompt : '';
+
+  return {
+    enableAIScriptAssist: normalizeBoolean(pluginSettings?.enableAIScriptAssist, true),
+    showAdvancedScriptOptions: normalizeBoolean(pluginSettings?.showAdvancedScriptOptions, false),
+    scriptConversionMode,
+    strictScriptConversion: normalizeBoolean(pluginSettings?.strictScriptConversion, false),
+    aiPrompt,
+  };
 }
 
 const importerPlugin: IImporterPluginUI = {
@@ -16,46 +57,46 @@ const importerPlugin: IImporterPluginUI = {
   version: '0.1.0',
   description: 'Imports Postman v2.1, Insomnia export JSON, and OpenAPI 3.x into ApiQuest collections',
 
-  importFormats: ['postman-v2.1', 'insomnia-json', 'openapi-3.0', 'openapi-3.1'],
+  importFormats: [...IMPORT_FORMATS],
 
-  fileExtensions: {
-    'postman-v2.1': { kind: 'file', extensions: ['.json'] },
-    'insomnia-json': { kind: 'file', extensions: ['.json'] },
-    'openapi-3.0': { kind: 'file', extensions: ['.json', '.yaml', '.yml'] },
-    'openapi-3.1': { kind: 'file', extensions: ['.json', '.yaml', '.yml'] }
-  },
+  fileExtensions: FILE_EXTENSIONS,
 
-  setup(uiContext: PluginUIContext): void {
-    UI = uiContext;
+  setup(context: PluginUIContext): void {
+    uiContext = context;
   },
 
   getDefaultSettings(): Record<string, unknown> {
     const defaults: ImporterPluginSettings = {
-      enableAIScriptAssist: true
+      enableAIScriptAssist: true,
+      showAdvancedScriptOptions: false,
+      scriptConversionMode: 'rule',
+      strictScriptConversion: false,
+      aiPrompt: '',
     };
+
     return defaults;
   },
 
   renderSettings(
     pluginSettings: Record<string, unknown> | undefined,
     onChange: (settings: Record<string, unknown> | undefined) => void,
-    uiContext: PluginUIContext
+    context: PluginUIContext
   ): React.ReactNode {
-    const RT = uiContext.Radix;
-    const settings: ImporterPluginSettings = {
-      enableAIScriptAssist: normalizeBoolean(pluginSettings?.enableAIScriptAssist, true)
-    };
+    const RT = context.Radix;
+    const settings = getSettings(pluginSettings);
 
     return (
       <RT.Flex direction="column" gap="2" mt="2">
         <RT.Flex align="center" justify="between">
-          <RT.Text size="2" weight="medium">Enable AI script assistance</RT.Text>
+          <RT.Text size="2" weight="medium">
+            Enable AI script assistance
+          </RT.Text>
           <RT.Switch
             checked={settings.enableAIScriptAssist === true}
-            onCheckedChange={(checked) => {
+            onCheckedChange={(checked: boolean): void => {
               onChange({
                 ...settings,
-                enableAIScriptAssist: checked
+                enableAIScriptAssist: checked,
               });
             }}
           />
@@ -63,132 +104,162 @@ const importerPlugin: IImporterPluginUI = {
         <RT.Text size="1" color="gray">
           Allows this importer to request AI-assisted script conversion through desktop-managed global AI settings.
         </RT.Text>
+
+        <RT.Separator size="4" mt="2" mb="1" />
+
+        <RT.Flex align="center" justify="between">
+          <RT.Text size="2" weight="medium">
+            Show advanced script conversion options
+          </RT.Text>
+          <RT.Switch
+            checked={settings.showAdvancedScriptOptions === true}
+            onCheckedChange={(checked: boolean): void => {
+              onChange({
+                ...settings,
+                showAdvancedScriptOptions: checked,
+              });
+            }}
+          />
+        </RT.Flex>
+
+        {settings.showAdvancedScriptOptions === true ? (
+          <RT.Flex direction="column" gap="2" mt="1">
+            <RT.Text size="1" color="gray">
+              Configure script conversion strategy used by importer host conversion pipeline.
+            </RT.Text>
+
+            <RT.RadioGroup.Root
+              value={settings.scriptConversionMode ?? 'rule'}
+              onValueChange={(value: string): void => {
+                const mode = value === 'ai' ? 'ai' : 'rule';
+                onChange({
+                  ...settings,
+                  scriptConversionMode: mode,
+                });
+              }}
+            >
+              <RT.Flex direction="column" gap="1">
+                <RT.Text as="label" size="2">
+                  <RT.Flex align="center" gap="2">
+                    <RT.RadioGroup.Item value="rule" />
+                    Rule-based conversion
+                  </RT.Flex>
+                </RT.Text>
+                <RT.Text as="label" size="2">
+                  <RT.Flex align="center" gap="2">
+                    <RT.RadioGroup.Item value="ai" />
+                    AI-assisted conversion (uses global AI settings)
+                  </RT.Flex>
+                </RT.Text>
+              </RT.Flex>
+            </RT.RadioGroup.Root>
+
+            <RT.Flex align="center" justify="between">
+              <RT.Text size="2">Strict script conversion mode</RT.Text>
+              <RT.Switch
+                checked={settings.strictScriptConversion === true}
+                onCheckedChange={(checked: boolean): void => {
+                  onChange({
+                    ...settings,
+                    strictScriptConversion: checked,
+                  });
+                }}
+              />
+            </RT.Flex>
+
+            <RT.TextArea
+              value={settings.aiPrompt ?? ''}
+              placeholder="Optional AI prompt for script conversion behavior"
+              onChange={(event: React.ChangeEvent<HTMLTextAreaElement>): void => {
+                onChange({
+                  ...settings,
+                  aiPrompt: event.target.value,
+                });
+              }}
+              rows={4}
+            />
+          </RT.Flex>
+        ) : null}
       </RT.Flex>
     );
   },
 
-  detectFormat(data: string | any): string | null {
-    const text = typeof data === 'string' ? data : JSON.stringify(data);
-    if (!text) return null;
-
-    if (text.includes('"_postman_id"') || text.includes('"postman_id"')) {
-      return 'postman-v2.1';
-    }
-
-    if (text.includes('"_type"') && text.includes('"__export_format"')) {
-      return 'insomnia-json';
-    }
-
-    if (text.includes('"openapi"')) {
-      if (text.includes('"3.1')) return 'openapi-3.1';
-      if (text.includes('"3.0')) return 'openapi-3.0';
-      return 'openapi-3.0';
-    }
-
-    return null;
+  detectFormat(data: string | unknown): string | null {
+    return detectImportFormat(data);
   },
 
-  validate(data: string | any, format: string): { valid: boolean; errors?: string[]; warnings?: string[] } {
-    const supported = this.importFormats.includes(format);
-    if (!supported) {
+  validate(data: string | unknown, format: string): ImportValidationResult {
+    if (!isImportFormat(format)) {
       return {
         valid: false,
-        errors: [`Unsupported import format: ${format}`]
+        errors: [`Unsupported import format: ${format}`],
       };
     }
 
-    if (data === null || data === undefined || (typeof data === 'string' && data.trim() === '')) {
+    const text = normalizeInputToText(data);
+    if (text === null || text.trim() === '') {
       return {
         valid: false,
-        errors: ['Import file is empty']
+        errors: ['Import file is empty'],
       };
     }
 
     return {
       valid: true,
-      warnings: ['Importer converter is scaffolded. Full format conversion implementation is pending.']
+      warnings: ['Importer converter is scaffolded. Full format conversion implementation is pending.'],
     };
   },
 
   async importCollection(
-    data: string | any,
+    data: string | unknown,
     format: string,
-    options?: {
-      pluginSettings?: Record<string, unknown>;
-      [key: string]: unknown;
-    }
-  ): Promise<any> {
-    // The workspace:importCollection IPC handler invokes the 'convert' action
-    // on this plugin's hostBundle directly (main-process to main-process).
-    // This renderer-side importCollection method is called from legacy code paths
-    // or from tests. Delegate to the host bridge if available.
-    if (UI?.host) {
-      return UI.host.invoke('convert', { data, format, options });
+    options?: ImportCollectionOptions
+  ): Promise<Record<string, unknown>> {
+    const payloadData = normalizeInputToText(data);
+    if (payloadData === null) {
+      throw new Error('[plugin-importer-ui] importCollection: input must be string-serializable');
     }
 
-    // Fallback stub for environments without host bridge (tests, web preview, etc.)
-    const warnings: string[] = [
-      'Host bridge not available. Conversion ran in fallback renderer path with no data mapping.'
-    ];
-    return {
-      info: {
-        id: `imported-${Date.now()}`,
-        name: `Imported (${format})`,
-        description: `Imported from ${format}`
+    if (uiContext?.host === undefined) {
+      throw new Error('[plugin-importer-ui] importCollection requires desktop host bridge');
+    }
+
+    return uiContext.host.invoke<Record<string, unknown>>('convert', {
+      data: payloadData,
+      format,
+      options: {
+        ...options,
+        convertScripts: true,
+        scriptConversionMode:
+          getSettings(options?.pluginSettings).scriptConversionMode ?? 'rule',
+        strictScriptConversion:
+          getSettings(options?.pluginSettings).strictScriptConversion === true,
+        aiPrompt: getSettings(options?.pluginSettings).aiPrompt ?? '',
       },
-      items: [],
-      variables: [],
-      warnings
-    };
+    });
   },
 
-  getOptionsSchema(format: string): any {
+  getOptionsSchema(format: string): Record<string, unknown> {
+    const schemaFormat: ImportFormat | string = isImportFormat(format) ? format : 'custom';
+
     return {
       type: 'object',
-      title: `Import options (${format})`,
+      title: `Import options (${schemaFormat})`,
       properties: {
         preserveDisabledRequests: {
           type: 'boolean',
           default: true,
-          description: 'Keep disabled requests/folders as disabled metadata where possible.'
+          description: 'Keep disabled requests/folders as disabled metadata where possible.',
         },
         includeScripts: {
           type: 'boolean',
           default: true,
-          description: 'Import script/test blocks when present.'
-        }
-      }
+          description: 'Import script/test blocks when present.',
+        },
+      },
     };
-  }
+  },
 };
-
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-}
-
-function summarizeSource(source: unknown): Record<string, unknown> {
-  if (typeof source === 'string') {
-    return {
-      type: 'text',
-      length: source.length
-    };
-  }
-
-  if (typeof source === 'object' && source !== null) {
-    return {
-      type: 'object',
-      keys: Object.keys(source as Record<string, unknown>).slice(0, 20)
-    };
-  }
-
-  return {
-    type: typeof source
-  };
-}
 
 export default importerPlugin;
 

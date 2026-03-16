@@ -10,7 +10,7 @@ export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab, clearTemporaryFlag, clearResourceState } = useTabNavigation();
   const { workspace } = useWorkspace();
   const { status } = useTabStatusState();
-  const { invokeSaveHandler } = useTabEditorBridge();
+  const { invokeSaveHandler, invokeDiscardHandler, invokeFlushHandler } = useTabEditorBridge();
 
   const [closeDialogTabId, setCloseDialogTabId] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
@@ -150,10 +150,12 @@ export function TabBar() {
               }
             }}
             onDiscard={async () => {
+              await invokeDiscardHandler(tab.id);
+              // Close first so editor unmounts immediately and no further triggers can be queued.
+              closeTab(tab.id);
               if (workspace) {
                 await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
               }
-              closeTab(tab.id);
             }}
             discardLabel="Discard"
             discardVariant="danger"
@@ -248,10 +250,23 @@ export function TabBar() {
               borderTop: isActive ? '2px solid var(--accent-9)' : 'none'
             }}
             onClick={() => {
-              setActiveTab(tab.id);
-              // Clear temporary flag on click
-              if (tab.isTemporary) {
-                clearTemporaryFlag(tab.id);
+              if (tab.id === activeTabId) return;
+              // Flush any pending debounced auto-save on the current tab before
+              // switching so the session state is up-to-date when the new tab
+              // mounts and reads it. invokeFlushHandler is a no-op when there is
+              // no pending save (hasPendingSaveRef.current is false).
+              if (activeTabId) {
+                void invokeFlushHandler(activeTabId).then(() => {
+                  setActiveTab(tab.id);
+                  if (tab.isTemporary) {
+                    clearTemporaryFlag(tab.id);
+                  }
+                });
+              } else {
+                setActiveTab(tab.id);
+                if (tab.isTemporary) {
+                  clearTemporaryFlag(tab.id);
+                }
               }
             }}
             title={tooltip}

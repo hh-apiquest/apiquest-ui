@@ -45,6 +45,14 @@ const UI_PLUGIN_CORE_DEPENDENCIES: Record<string, string[]> = {
   '@apiquest/plugin-sse-ui': ['@apiquest/plugin-sse'],
 };
 
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Installs workspace plugins to appData/plugins in dev mode
  * Only runs if app is not packaged (development mode)
@@ -114,16 +122,16 @@ export async function installWorkspacePlugins(): Promise<void> {
       try {
         await copyRecursive(distSource, distDest);
         console.log(`[DevInstaller] Installed: ${pluginName}`);
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
+      } catch (error: unknown) {
+        if (isErrnoException(error) && error.code === 'ENOENT') {
           console.warn(`[DevInstaller] Warning: ${pluginName} has no dist/ folder - run build first`);
         } else {
           throw error;
         }
       }
 
-    } catch (error: any) {
-      console.error(`[DevInstaller] Failed to install ${pluginName}:`, error.message);
+    } catch (error: unknown) {
+      console.error(`[DevInstaller] Failed to install ${pluginName}:`, toErrorMessage(error));
       // Continue with other plugins
     }
   }
@@ -165,15 +173,15 @@ export async function installWorkspacePlugins(): Promise<void> {
       try {
         await copyRecursive(distSource, distDest);
         console.log(`[DevInstaller] Installed: ${pluginName}`);
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
+      } catch (error: unknown) {
+        if (isErrnoException(error) && error.code === 'ENOENT') {
           console.warn(`[DevInstaller] Warning: ${pluginName} has no dist/ folder - run build first`);
         } else {
           throw error;
         }
       }
-    } catch (error: any) {
-      console.error(`[DevInstaller] Failed to install ${pluginName}:`, error.message);
+    } catch (error: unknown) {
+      console.error(`[DevInstaller] Failed to install ${pluginName}:`, toErrorMessage(error));
     }
   }
 

@@ -4,13 +4,75 @@ import type { Request, ProtocolResponse } from '@apiquest/types';
 
 import * as RT from '@radix-ui/themes';
 
-import type { PluginUIContext } from '@apiquest/plugin-ui-types';
+interface SseRequestData {
+  url?: string;
+  timeout?: number;
+}
 
-let UI: PluginUIContext;
+interface SseMessage {
+  event?: string;
+  data?: string;
+  id?: string;
+}
 
-function SseConfigTab({ request, onChange }: UITabProps) {
-  const url = String((request.data as any)?.url ?? '');
-  const timeout = Number((request.data as any)?.timeout ?? 30000);
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function getSseRequestData(request: Request): SseRequestData {
+  const data = asRecord(request.data);
+  if (data === null) {
+    return {};
+  }
+
+  return {
+    url: typeof data.url === 'string' ? data.url : undefined,
+    timeout: typeof data.timeout === 'number' ? data.timeout : undefined,
+  };
+}
+
+function patchSseRequestData(request: Request, patch: Partial<SseRequestData>): Request {
+  const existingData = asRecord(request.data) ?? {};
+  return {
+    ...request,
+    data: {
+      ...existingData,
+      ...patch,
+    },
+  };
+}
+
+function toSseMessages(response: ProtocolResponse | null | undefined): SseMessage[] {
+  const responseData = asRecord(response?.data);
+  if (responseData === null) {
+    return [];
+  }
+
+  const eventsValue = responseData.events;
+  if (!Array.isArray(eventsValue)) {
+    return [];
+  }
+
+  return eventsValue.flatMap((item): SseMessage[] => {
+    const record = asRecord(item);
+    if (record === null) {
+      return [];
+    }
+
+    return [
+      {
+        event: typeof record.event === 'string' ? record.event : undefined,
+        data: typeof record.data === 'string' ? record.data : undefined,
+        id: typeof record.id === 'string' ? record.id : undefined,
+      },
+    ];
+  });
+}
+
+function SseConfigTab({ request, onChange }: UITabProps): React.ReactElement {
+  const data = getSseRequestData(request);
+  const url = data.url ?? '';
+  const timeout = data.timeout ?? 30000;
 
   return (
     <RT.Box p="4">
@@ -22,10 +84,11 @@ function SseConfigTab({ request, onChange }: UITabProps) {
           <RT.TextField.Root
             value={url}
             onChange={(e) =>
-              onChange({
-                ...request,
-                data: { ...(request.data as any), url: (e.target as HTMLInputElement).value }
-              })
+              onChange(
+                patchSseRequestData(request, {
+                  url: (e.target as HTMLInputElement).value,
+                })
+              )
             }
             placeholder="https://example.com/events"
             size="2"
@@ -40,10 +103,11 @@ function SseConfigTab({ request, onChange }: UITabProps) {
             type="number"
             value={String(timeout)}
             onChange={(e) =>
-              onChange({
-                ...request,
-                data: { ...(request.data as any), timeout: Number((e.target as HTMLInputElement).value) }
-              })
+              onChange(
+                patchSseRequestData(request, {
+                  timeout: Number((e.target as HTMLInputElement).value),
+                })
+              )
             }
             placeholder="30000"
             size="2"
@@ -54,8 +118,8 @@ function SseConfigTab({ request, onChange }: UITabProps) {
   );
 }
 
-function SseMessagesTab({ response }: ResponseTabProps) {
-  const messages = (response as any)?.events || [];
+function SseMessagesTab({ response }: ResponseTabProps): React.ReactElement {
+  const messages = toSseMessages(response);
 
   if (messages.length === 0) {
     return (
@@ -93,17 +157,17 @@ function SseMessagesTab({ response }: ResponseTabProps) {
               </RT.Table.Cell>
               <RT.Table.Cell>
                 <RT.Badge color="blue" variant="soft">
-                  {msg.event || 'message'}
+                  {msg.event !== undefined && msg.event.trim() !== '' ? msg.event : 'message'}
                 </RT.Badge>
               </RT.Table.Cell>
               <RT.Table.Cell>
                 <RT.Text as="span" size="1" style={{ fontFamily: 'var(--font-mono)' }}>
-                  {msg.data || '-'}
+                  {msg.data !== undefined && msg.data.trim() !== '' ? msg.data : '-'}
                 </RT.Text>
               </RT.Table.Cell>
               <RT.Table.Cell>
                 <RT.Text as="span" size="1" color="gray">
-                  {msg.id || '-'}
+                  {msg.id !== undefined && msg.id.trim() !== '' ? msg.id : '-'}
                 </RT.Text>
               </RT.Table.Cell>
             </RT.Table.Row>
@@ -114,9 +178,8 @@ function SseMessagesTab({ response }: ResponseTabProps) {
   );
 }
 
-export const SseSummaryLine: SummaryLineComponent = ({ request, response }) => {
-  const events = (response as any)?.events as unknown[] | undefined;
-  const messageCount = Array.isArray(events) ? events.length : 0;
+export const SseSummaryLine: SummaryLineComponent = ({ response }) => {
+  const messageCount = toSseMessages(response).length;
 
   return (
     <RT.Flex align="center" gap="2">
@@ -134,8 +197,8 @@ const ssePluginUI: IProtocolPluginUI = {
   icon: 'signal',
   protocol: 'sse',
 
-  setup(uiContext: PluginUIContext) {
-    UI = uiContext;
+  setup(): void {
+    // No-op for now. Tab components receive full context via props.
   },
 
   createNewRequest(name: string): Request {
@@ -147,19 +210,18 @@ const ssePluginUI: IProtocolPluginUI = {
         url: '',
         timeout: 30000
       }
-    } as any;
+    };
   },
 
-  getRequestBadge(request: Request): RequestBadge {
+  getRequestBadge(_request: Request): RequestBadge {
     return {
       primary: 'SSE',
       color: 'green'
     };
   },
 
-  getSummary(request: Request, response?: ProtocolResponse): RequestSummary {
-    const events = (response as any)?.events as unknown[] | undefined;
-    const messageCount = Array.isArray(events) ? events.length : 0;
+  getSummary(_request: Request, response?: ProtocolResponse): RequestSummary {
+    const messageCount = toSseMessages(response).length;
     return {
       summaryLine: SseSummaryLine,
       statusLevel: 'success',
@@ -171,7 +233,9 @@ const ssePluginUI: IProtocolPluginUI = {
   },
 
   renderAddressBar(request: Request, onChange: (request: Request) => void) {
-    const url = String((request.data as any)?.url ?? '');
+    const data = getSseRequestData(request);
+    const url = data.url ?? '';
+
     return (
       <div
         style={{
@@ -188,10 +252,11 @@ const ssePluginUI: IProtocolPluginUI = {
         <RT.TextField.Root
           value={url}
           onChange={(e) =>
-            onChange({
-              ...request,
-              data: { ...(request.data as any), url: (e.target as HTMLInputElement).value }
-            })
+            onChange(
+              patchSseRequestData(request, {
+                url: (e.target as HTMLInputElement).value,
+              })
+            )
           }
           placeholder="https://example.com/events"
           size="2"

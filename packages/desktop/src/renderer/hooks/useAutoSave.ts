@@ -3,25 +3,51 @@ import { useEffect, useRef, useCallback } from 'react';
 
 interface UseAutoSaveOptions {
   onSave: () => Promise<void>;
-  delay?: number; // Debounce delay in milliseconds (default: 2000ms)
+  delay?: number; // Debounce delay in milliseconds (default: 1000ms)
   enabled?: boolean; // Whether auto-save is enabled (default: true)
 }
 
-export function useAutoSave({ onSave, delay = 2000, enabled = true }: UseAutoSaveOptions) {
+interface UseAutoSaveResult {
+  trigger: () => void;
+  flush: () => Promise<void>;
+  cancel: () => Promise<void>;
+}
+
+export function useAutoSave({ onSave, delay = 1000, enabled = true }: UseAutoSaveOptions): UseAutoSaveResult {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isSavingRef = useRef(false);
   const hasPendingSaveRef = useRef(false);
+  const inFlightSaveRef = useRef<Promise<void> | null>(null);
 
   // Clear existing timeout
-  const clearTimer = useCallback(() => {
-    if (timeoutRef.current) {
+  const clearTimer = useCallback((): void => {
+    if (timeoutRef.current !== null) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
   }, []);
 
+  const executeSave = useCallback(async (): Promise<void> => {
+    if (isSavingRef.current) return;
+
+    isSavingRef.current = true;
+    hasPendingSaveRef.current = false;
+
+    const savePromise = onSave()
+      .catch((error: unknown) => {
+        console.error('[useAutoSave] Save failed:', error);
+      })
+      .finally(() => {
+        isSavingRef.current = false;
+        inFlightSaveRef.current = null;
+      });
+
+    inFlightSaveRef.current = savePromise;
+    await savePromise;
+  }, [onSave]);
+
   // Trigger auto-save with debounce
-  const trigger = useCallback(() => {
+  const trigger = useCallback((): void => {
     if (!enabled) return;
 
     // Clear existing timer
@@ -31,21 +57,10 @@ export function useAutoSave({ onSave, delay = 2000, enabled = true }: UseAutoSav
     hasPendingSaveRef.current = true;
 
     // Set new timer
-    timeoutRef.current = setTimeout(async () => {
-      if (isSavingRef.current) return;
-
-      isSavingRef.current = true;
-      hasPendingSaveRef.current = false;
-
-      try {
-        await onSave();
-      } catch (error) {
-        console.error('[useAutoSave] Save failed:', error);
-      } finally {
-        isSavingRef.current = false;
-      }
+    timeoutRef.current = setTimeout((): void => {
+      void executeSave();
     }, delay);
-  }, [onSave, delay, enabled, clearTimer]);
+  }, [delay, enabled, clearTimer, executeSave]);
 
   // Flush immediately (save now, cancel debounce)
   const flush = useCallback(async () => {
@@ -56,33 +71,35 @@ export function useAutoSave({ onSave, delay = 2000, enabled = true }: UseAutoSav
 
     // If there's a pending save or we're about to unmount, save now
     if (hasPendingSaveRef.current && !isSavingRef.current) {
-      isSavingRef.current = true;
-      hasPendingSaveRef.current = false;
-
-      try {
-        await onSave();
-      } catch (error) {
-        console.error('[useAutoSave] Flush failed:', error);
-      } finally {
-        isSavingRef.current = false;
-      }
+      await executeSave();
     }
-  }, [onSave, enabled, clearTimer]);
+  }, [enabled, clearTimer, executeSave]);
 
-  // Cleanup on unmount - flush any pending saves
+  // Cancel pending auto-save and wait for any currently-running save.
+  // Used by explicit discard flows to guarantee no late autosave writes.
+  const cancel = useCallback(async (): Promise<void> => {
+    clearTimer();
+    hasPendingSaveRef.current = false;
+
+    if (inFlightSaveRef.current !== null) {
+      await inFlightSaveRef.current;
+    }
+  }, [clearTimer]);
+
+  // Cleanup on unmount - flush pending save for normal close/navigation paths.
+  // Explicit discard must call cancel() before close to avoid persisting discarded state.
   useEffect(() => {
     return () => {
-      // Flush synchronously on unmount (best effort)
       if (hasPendingSaveRef.current && !isSavingRef.current) {
-        // We can't use async here, but we can fire-and-forget
-        onSave().catch(err => console.error('[useAutoSave] Unmount save failed:', err));
+        void executeSave();
       }
       clearTimer();
     };
-  }, [onSave, clearTimer]);
+  }, [clearTimer, executeSave]);
 
   return {
     trigger,  // Trigger debounced save
-    flush     // Flush immediately
+    flush,    // Flush immediately
+    cancel,   // Cancel pending/in-flight autosave
   };
 }

@@ -1,6 +1,7 @@
 // Console/Debug Panel types
 
-export type ConsoleMessageLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
+import { LogLevel } from "@apiquest/types";
+
 export type ConsoleMessageSource = 'system' | 'script' | 'network' | 'test';
 
 /**
@@ -9,10 +10,10 @@ export type ConsoleMessageSource = 'system' | 'script' | 'network' | 'test';
 export interface ConsoleMessage {
   id: string;
   timestamp: Date;
-  level: ConsoleMessageLevel;
+  level: LogLevel;
   source: ConsoleMessageSource;
   message: string;
-  data?: any;
+  data?: unknown;
   
   // Context
   requestId?: string;
@@ -28,7 +29,7 @@ export interface ConsoleMessage {
  * Console Filter
  */
 export interface ConsoleFilter {
-  levels: ConsoleMessageLevel[];
+  levels: LogLevel[];
   sources: ConsoleMessageSource[];
   searchText?: string;
   requestId?: string;

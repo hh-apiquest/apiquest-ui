@@ -69,6 +69,9 @@ export type ResourceSessionState = {
   condition?: string;
   // Full resource snapshot (request/collection/folder). Used for restoring unsaved edits.
   snapshot?: any;
+  // Transient editor-only state (e.g. request.data._ui for headers/params rows).
+  // Kept separate from `data` so strict schema-safe payloads remain available.
+  _ui?: Record<string, unknown>;
 };
 
 export type TabSessionInfo = {

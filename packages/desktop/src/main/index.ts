@@ -33,7 +33,7 @@ function getDevWindowIconPath(): string | null {
   return null;
 }
 
-function registerDevtoolsHotkey(window: BrowserWindow) {
+function registerDevtoolsHotkey(window: BrowserWindow): void {
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') {
       event.preventDefault();
@@ -42,7 +42,7 @@ function registerDevtoolsHotkey(window: BrowserWindow) {
   });
 }
 
-function createWindow() {
+function createWindow(): void {
   const windowOptions: BrowserWindowConstructorOptions = {
     width: 1400,
     height: 900,
@@ -58,7 +58,7 @@ function createWindow() {
   };
 
   const devIconPath = getDevWindowIconPath();
-  if (devIconPath) {
+  if (devIconPath !== null) {
     windowOptions.icon = devIconPath;
   }
 
@@ -66,14 +66,14 @@ function createWindow() {
 
   // Load renderer
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+    void mainWindow.loadURL('http://localhost:5173');
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 }
 
 // Register all IPC handlers
-function registerHandlers() {
+function registerHandlers(): void {
   registerWorkspaceHandlers();
   registerCollectionHandlers();
   registerEnvironmentHandlers();
@@ -113,14 +113,14 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 // App lifecycle
-app.whenReady().then(async () => {
+void app.whenReady().then(async () => {
   // Initialize services
   await workspaceManager.initialize();
   await sessionService.initialize();
   
   // Create window first
   createWindow();
-  if (mainWindow) {
+  if (mainWindow !== null) {
     registerDevtoolsHotkey(mainWindow);
   }
   

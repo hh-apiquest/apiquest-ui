@@ -281,8 +281,16 @@ function CollectionItem({
   const [duplicatingCollection, setDuplicatingCollection] = useState(false);
   const [deletingCollection, setDeletingCollection] = useState(false);
   const { workspace, getCollection, refreshWorkspace } = useWorkspace();
-  const { openRequest, openCollection } = useTabNavigation();
+  const { tabs, closeTab, openRequest, openCollection } = useTabNavigation();
   const renameId = `collection:${collection.id}`;
+
+  const closeTabsForCollectionDeletion = () => {
+    const tabIdsToClose = tabs
+      .filter(tab => tab.collectionId === collection.id)
+      .map(tab => tab.id);
+
+    tabIdsToClose.forEach(closeTab);
+  };
 
   // Explicitly focus input when rename becomes active
   useEffect(() => {
@@ -401,6 +409,7 @@ function CollectionItem({
     if (!workspace) return;
     try {
       await window.quest.workspace.deleteCollection(workspace.id, collection.id);
+      closeTabsForCollectionDeletion();
       await refreshWorkspace();
       setDeletingCollection(false);
     } catch (error) {
@@ -710,7 +719,7 @@ function CollectionRequestItem({
 }) {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const requestInputRef = useRef<HTMLInputElement>(null);
-  const { openRequest, openFolder } = useTabNavigation();
+  const { tabs, closeTab, openRequest, openFolder } = useTabNavigation();
 
   const { workspace, refreshWorkspace } = useWorkspace();
 
@@ -724,6 +733,37 @@ function CollectionRequestItem({
     const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
     const [deletingFolder, setDeletingFolder] = useState(false);
     const renameId = `folder:${item.id}`;
+
+    const closeTabsForFolderDeletion = () => {
+      const folderIds = new Set<string>([item.id]);
+      const requestIds = new Set<string>();
+
+      const stack = [...(item.items || [])];
+      while (stack.length > 0) {
+        const node = stack.pop();
+        if (!node) {
+          continue;
+        }
+
+        if (node.items) {
+          folderIds.add(node.id);
+          stack.push(...node.items);
+        } else {
+          requestIds.add(node.id);
+        }
+      }
+
+      const tabIdsToClose = tabs
+        .filter(tab =>
+          tab.collectionId === collectionId && (
+            (tab.type === 'folder' && folderIds.has(tab.resourceId)) ||
+            (tab.type === 'request' && requestIds.has(tab.resourceId))
+          )
+        )
+        .map(tab => tab.id);
+
+      tabIdsToClose.forEach(closeTab);
+    };
     
     // Explicitly focus input when rename becomes active
     useEffect(() => {
@@ -786,6 +826,7 @@ function CollectionRequestItem({
       try {
         console.log('[Folder] Deleting folder:', item.id);
         await window.quest.workspace.deleteFolder(workspace.id, collectionId, item.id);
+        closeTabsForFolderDeletion();
         console.log('[Folder] Folder deleted, refreshing workspace...');
         await refreshWorkspace();
         console.log('[Folder] Workspace refreshed');
@@ -1025,6 +1066,14 @@ function CollectionRequestItem({
   const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
   const [deletingRequest, setDeletingRequest] = useState(false);
   const renameId = `request:${item.id}`;
+
+  const closeTabsForRequestDeletion = () => {
+    const tabIdsToClose = tabs
+      .filter(tab => tab.type === 'request' && tab.collectionId === collectionId && tab.resourceId === item.id)
+      .map(tab => tab.id);
+
+    tabIdsToClose.forEach(closeTab);
+  };
   
   // Explicitly focus input when rename becomes active
   useEffect(() => {
@@ -1107,6 +1156,7 @@ function CollectionRequestItem({
     try {
       console.log('[Request] Deleting request:', item.id);
       await window.quest.workspace.deleteRequest(workspace.id, collectionId, item.id);
+      closeTabsForRequestDeletion();
       console.log('[Request] Request deleted, refreshing workspace...');
       await refreshWorkspace();
       console.log('[Request] Workspace refreshed');

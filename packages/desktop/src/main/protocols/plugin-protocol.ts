@@ -22,6 +22,10 @@ import { protocol, app } from 'electron';
 import { readFile } from 'fs/promises';
 import path from 'path';
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Shim code for each shared vendor module.
  * Each shim reads from window.__VENDOR__ which is set by main.tsx.
@@ -85,7 +89,7 @@ function registerVendorProtocol(): void {
       // vendor:///react.js -> pathname=/react.js, hostname=empty (correct)
       // vendor://react.js -> pathname=/, hostname=react.js (wrong - filename in hostname)
       let fileName: string;
-      if (url.pathname && url.pathname !== '/') {
+      if (url.pathname !== '/') {
         fileName = url.pathname.slice(1); // Remove leading /
       } else {
         fileName = url.hostname; // Fallback: filename was parsed as hostname
@@ -98,7 +102,7 @@ function registerVendorProtocol(): void {
       console.log(`[VendorProtocol] Request: ${request.url} -> ${fileName}`);
       
       const shim = VENDOR_SHIMS[fileName];
-      if (shim) {
+      if (shim !== undefined) {
         return new Response(shim.trim(), {
           status: 200,
           headers: {
@@ -113,9 +117,10 @@ function registerVendorProtocol(): void {
         status: 200,
         headers: { 'content-type': 'application/javascript' }
       });
-    } catch (error: any) {
-      console.error(`[VendorProtocol] Error: ${request.url}:`, error.message);
-      return new Response(`Vendor error: ${error.message}`, {
+    } catch (error: unknown) {
+      const message = toErrorMessage(error);
+      console.error(`[VendorProtocol] Error: ${request.url}:`, message);
+      return new Response(`Vendor error: ${message}`, {
         status: 500,
         headers: { 'content-type': 'text/plain' }
       });
@@ -175,10 +180,11 @@ export function registerPluginProtocol(pluginsDir: string): void {
         }
       });
       
-    } catch (error: any) {
-      console.error(`[PluginProtocol] Error loading ${request.url}:`, error.message);
+    } catch (error: unknown) {
+      const message = toErrorMessage(error);
+      console.error(`[PluginProtocol] Error loading ${request.url}:`, message);
       
-      return new Response(`Plugin file not found: ${error.message}`, {
+      return new Response(`Plugin file not found: ${message}`, {
         status: 404,
         headers: { 'content-type': 'text/plain' }
       });
@@ -205,7 +211,7 @@ function getContentType(ext: string): string {
     '.jpeg': 'image/jpeg',
   };
   
-  return contentTypes[ext] || 'text/plain';
+  return contentTypes[ext] ?? 'text/plain';
 }
 
 /**
