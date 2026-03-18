@@ -9,3 +9,5 @@ export { trashService, TrashService } from './TrashService';
 export { pluginManagerService, PluginManagerService } from './PluginManagerService';
 export { pluginLoader } from './PluginLoaderService';
 export type { PluginLoaderService } from './PluginLoaderService';
+export { pluginInteractionService } from './PluginInteractionService';
+export type { ActiveInteraction, IncomingInteractionRequest } from './PluginInteractionService';

@@ -102,14 +102,39 @@ function convertScript(script: string | undefined, warnings: string[], contextNa
 
   result = result.replace(/\bpm\.test\s*\(/g, 'quest.test(');
   result = result.replace(/\bpm\.expect\s*\(/g, 'expect(');
+
+  // Response assertion helpers
   result = result.replace(/\bpm\.response\.to\.have\.status\s*\((\d+)\)/g, 'quest.response.to.have.status($1)');
   result = result.replace(/\bpm\.response\.to\.be\.ok\b/g, 'quest.response.to.be.ok');
   result = result.replace(/\bpm\.response\.to\.be\.success\b/g, 'quest.response.to.be.success');
   result = result.replace(/\bpm\.response\.to\.be\.clientError\b/g, 'quest.response.to.be.clientError');
   result = result.replace(/\bpm\.response\.to\.be\.serverError\b/g, 'quest.response.to.be.serverError');
   result = result.replace(/\bpm\.response\.to\.have\.header\s*\(([^)]+)\)/g, 'quest.response.to.have.header($1)');
+  // jsonBody 2-arg form: pm.response.to.have.jsonBody('key', value) — quest only supports field existence;
+  // expand to an equality assertion using quest.response.json()
+  result = result.replace(
+    /\bpm\.response\.to\.have\.jsonBody\s*\('([^']+)',\s*([^)]+)\)/g,
+    "expect(quest.response.json()['$1']).to.equal($2)"
+  );
+  result = result.replace(
+    /\bpm\.response\.to\.have\.jsonBody\s*\("([^"]+)",\s*([^)]+)\)/g,
+    'expect(quest.response.json()["$1"]).to.equal($2)'
+  );
+  // jsonBody 1-arg form: field-existence check maps 1:1
+  result = result.replace(/\bpm\.response\.to\.have\.jsonBody\s*\(([^)]+)\)/g, 'quest.response.to.have.jsonBody($1)');
+
+  // Response body and headers
   result = result.replace(/\bpm\.response\.json\s*\(\)/g, 'quest.response.json()');
   result = result.replace(/\bpm\.response\.text\s*\(\)/g, 'quest.response.text()');
+  result = result.replace(/\bpm\.response\.body\b/g, 'quest.response.body');
+  result = result.replace(/\bpm\.response\.headers\.get\s*\(([^)]+)\)/g, 'quest.response.headers.get($1)');
+  result = result.replace(/\bpm\.response\.headers\.has\s*\(([^)]+)\)/g, 'quest.response.headers.has($1)');
+  result = result.replace(/\bpm\.response\.headers\.toObject\s*\(\)/g, 'quest.response.headers.toObject()');
+
+  // Response status and metrics
+  result = result.replace(/\bpm\.response\.code\b/g, 'quest.response.status');
+  result = result.replace(/\bpm\.response\.status\b/g, 'quest.response.status');
+  result = result.replace(/\bpm\.response\.responseTime\b/g, 'quest.response.duration');
 
   result = result.replace(/\bpm\.environment\.get\s*\(([^)]+)\)/g, 'quest.environment.variables.get($1)');
   result = result.replace(/\bpm\.environment\.set\s*\(([^)]+)\)/g, 'quest.environment.variables.set($1)');
@@ -438,7 +463,85 @@ function convertPostmanItems(items: PostmanItem[], warnings: string[]): Collecti
   });
 }
 
-export function convertPostmanV21(
+// ---------------------------------------------------------------------------
+// Summary helper (used by host-bundle Tier 3 flow)
+// ---------------------------------------------------------------------------
+
+export interface PostmanCollectionSummary {
+  name: string;
+  requestCount: number;
+  folderCount: number;
+  hasScripts: boolean;
+  variableCount: number;
+}
+
+function countPostmanItems(
+  items: PostmanItem[]
+): { requests: number; folders: number; hasScripts: boolean } {
+  let requests = 0;
+  let folders = 0;
+  let hasScripts = false;
+
+  for (const item of items) {
+    if (Array.isArray(item.item)) {
+      folders++;
+      const nested = countPostmanItems(item.item);
+      requests += nested.requests;
+      folders += nested.folders;
+      hasScripts = hasScripts || nested.hasScripts;
+    } else {
+      requests++;
+    }
+
+    if ((item.event ?? []).some((e) => e.disabled !== true && (e.script?.exec ?? '').length > 0)) {
+      hasScripts = true;
+    }
+  }
+
+  return { requests, folders, hasScripts };
+}
+
+/**
+ * Parse a Postman v2.1 export without converting and return a human-readable
+ * summary of its contents. Returns null if the payload is not a valid Postman
+ * collection.
+ */
+export function getPostmanCollectionSummary(raw: string): PostmanCollectionSummary | null {
+  let postman: PostmanCollection;
+  try {
+    postman = JSON.parse(raw) as PostmanCollection;
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(postman.info) || !Array.isArray(postman.item)) {
+    return null;
+  }
+
+  const name = typeof postman.info.name === 'string' && postman.info.name !== ''
+    ? postman.info.name
+    : 'Postman Collection';
+
+  const { requests, folders, hasScripts: itemScripts } = countPostmanItems(postman.item);
+
+  // Also check collection-level scripts
+  const collectionHasScripts = itemScripts ||
+    (postman.event ?? []).some((e) => e.disabled !== true && (e.script?.exec ?? '').length > 0);
+
+  const variableCount = (postman.variable ?? []).filter(
+    (v) => (v.key ?? '').trim() !== ''
+  ).length;
+
+  return {
+    name,
+    requestCount: requests,
+    folderCount: folders,
+    hasScripts: collectionHasScripts,
+    variableCount,
+  };
+}
+
+export function convertPostman(
   raw: string,
   logger: PluginSandboxConsole,
   options?: ImportConvertOptions
@@ -448,11 +551,20 @@ export function convertPostmanV21(
   try {
     postman = JSON.parse(raw) as PostmanCollection;
   } catch {
-    throw new Error('[plugin-importer-ui] Failed to parse Postman JSON');
+    throw new Error('[plugin-importer-ui] postman: failed to parse JSON');
   }
 
   if (!isRecord(postman.info) || !Array.isArray(postman.item)) {
-    throw new Error('[plugin-importer-ui] Not a valid Postman collection (missing info or item)');
+    throw new Error('[plugin-importer-ui] postman: not a valid Postman collection (missing info or item)');
+  }
+
+  // Version guard: only Postman Collection Format v2.1 is supported
+  const schema = typeof postman.info._postman_schema === 'string' ? postman.info._postman_schema : '';
+  if (schema !== '' && !schema.includes('v2.1')) {
+    throw new Error(
+      `[plugin-importer-ui] postman: unsupported schema version "${schema}". ` +
+      `Only Postman Collection Format v2.1 is supported.`
+    );
   }
 
   const warnings: string[] = [];
@@ -482,7 +594,8 @@ export function convertPostmanV21(
     },
     protocol: 'http',
     options: {
-      strictMode: false,
+      // strictMode controls runner determinism: true = no conditional tests or try/catch (default).
+      strictMode: options?.collectionStrictMode ?? true,
     },
     auth: convertAuth(postman.auth, warnings),
     variables: toVariableRecord(postman.variable),
@@ -515,7 +628,9 @@ export function convertPostmanV21(
   }
 
   logger.info(
-    `[plugin-importer-ui] Converted Postman v2.1 collection '${convertedCollection.info.name}': ${convertedCollection.items.length} top-level items, ${Object.keys(convertedCollection.variables ?? {}).length} variables`
+    `[plugin-importer-ui] postman: converted collection '${convertedCollection.info.name}': ` +
+    `${convertedCollection.items.length} top-level items, ` +
+    `${Object.keys(convertedCollection.variables ?? {}).length} variables`
   );
 
   return convertedCollection;

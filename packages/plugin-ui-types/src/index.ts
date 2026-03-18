@@ -247,6 +247,52 @@ export interface PluginSandboxConsole {
 }
 
 /**
+ * Interaction response returned by ui.prompt.
+ * ok=true: user submitted — value contains the typed response.
+ * ok=false: user cancelled or the interaction was dismissed/timed out.
+ */
+export type PluginInteractionResult<TValue = unknown> =
+  | { ok: true; value: TValue }
+  | { ok: false; reason: 'cancelled' | 'dismissed' | 'timeout' | 'renderer-unavailable' };
+
+/**
+ * UI interaction bridge injected as `ui` inside a plugin's hostBundle VM sandbox.
+ * Allows a host-bundle handler to pause mid-execution and request a plugin-owned
+ * dialog from the renderer, then resume with the user's input.
+ *
+ * ui.prompt and ui.alert are only valid when the handler was triggered by a
+ * renderer-initiated host:invoke IPC call (i.e., uiContext.host.invoke).
+ * Calling them from a direct main-process dispatch will throw an error.
+ */
+export interface PluginSandboxUiBridge {
+  /**
+   * Request a plugin-owned interaction dialog and await the user's response.
+   * The promptKey must match a registration returned by the plugin's
+   * getInteractionRegistrations() method in the renderer-side plugin object.
+   *
+   * @param request.promptKey  Identifies which dialog component to open.
+   * @param request.payload    Optional data passed as props to the dialog.
+   * @returns A discriminated union: { ok: true, value } or { ok: false, reason }.
+   */
+  prompt<TResponse = unknown>(request: {
+    promptKey: string;
+    payload?: unknown;
+  }): Promise<PluginInteractionResult<TResponse>>;
+
+  /**
+   * Show a transient alert notification in the renderer and await dismissal.
+   * The alert is rendered by the desktop portal — no plugin component required.
+   * Resolves when the user dismisses or after a timeout.
+   */
+  alert(request: {
+    level: 'info' | 'warning' | 'error' | 'success';
+    title: string;
+    message: string;
+    details?: string[];
+  }): Promise<void>;
+}
+
+/**
  * Full API injected as globals into a plugin's hostBundle VM sandbox.
  * These identifiers are the only globals accessible in the bundle.
  * Use this type to typecheck your hostBundle entry module during development.
@@ -265,6 +311,43 @@ export interface PluginSandboxGlobals {
   fetch(url: string, options?: { headers?: Record<string, string>; method?: string; body?: string }): Promise<string>;
   /** Scoped console — all output is tagged with the plugin package name. */
   console: PluginSandboxConsole;
+  /**
+   * UI interaction bridge — pauses main-process handler execution to request
+   * plugin-owned renderer dialogs and await user input.
+   * Only valid when called from a renderer-initiated host:invoke.
+   */
+  ui: PluginSandboxUiBridge;
+}
+
+/**
+ * A single renderer-side interaction registration contributed by a plugin.
+ * The plugin returns an array of these from getInteractionRegistrations().
+ *
+ * - promptKey: must match the key passed to ui.prompt({ promptKey }) in the hostBundle.
+ * - Component: React component rendered by the desktop interaction portal when a
+ *   prompt request arrives. Receives payload, onSubmit, and onCancel props.
+ */
+export interface PluginInteractionRegistration {
+  promptKey: string;
+  Component: ComponentType<{
+    payload: unknown;
+    onSubmit: (value: unknown) => void;
+    onCancel: () => void;
+  }>;
+}
+
+/**
+ * Mixin interface for any plugin object (IImporterPluginUI, IProtocolPluginUI, etc.)
+ * that wants to register renderer-side interaction components.
+ *
+ * Implement getInteractionRegistrations() and return one PluginInteractionRegistration
+ * per promptKey your hostBundle calls via ui.prompt({ promptKey }).
+ *
+ * The desktop PluginInteractionService discovers these registrations automatically
+ * after each plugin.setup() call.
+ */
+export interface PluginInteractionProvider {
+  getInteractionRegistrations?(): PluginInteractionRegistration[];
 }
 
 /**
@@ -778,7 +861,7 @@ export interface IImporterPluginUI {
   description: string;
   
   // What formats does this plugin import?
-  // Example: ['postman'], ['insomnia'], ['openapi-3.0', 'openapi-3.1']
+  // Example: ['postman'], ['insomnia'], ['openapi']
   importFormats: string[];
   
   /**
@@ -856,6 +939,25 @@ export interface IImporterPluginUI {
    * Defines what options the user can configure for import
    */
   getOptionsSchema?(format: string): unknown;
+
+  /**
+   * Return renderer-side interaction component registrations for this plugin.
+   *
+   * Each registration maps a promptKey (used in the hostBundle's ui.prompt call)
+   * to a React component the desktop portal will render inside a Radix Dialog when
+   * a prompt request arrives from the main process.
+   *
+   * The desktop PluginInteractionService calls this after setup().
+   *
+   * Example:
+   *   getInteractionRegistrations() {
+   *     return [
+   *       { promptKey: 'importer.insomnia.preConvert', Component: InsomniaPreConvertDialog },
+   *       { promptKey: 'importer.insomnia.failureAlert', Component: InsomniaFailureDialog },
+   *     ];
+   *   }
+   */
+  getInteractionRegistrations?(): PluginInteractionRegistration[];
 }
 
 /**

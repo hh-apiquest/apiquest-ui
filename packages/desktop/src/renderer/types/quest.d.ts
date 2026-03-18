@@ -266,6 +266,7 @@ declare global {
        * Plugin host bridge — generic relay for privileged plugin operations.
        * Each method is scoped to the calling plugin's npm package name.
        * Renderer plugin code must not call this directly; use PluginUIContext.host instead.
+       * PluginInteractionService uses onInteractionRequest / sendInteractionResponse.
        */
       host: {
         showOpenDialog(packageName: string, options: {
@@ -278,6 +279,30 @@ declare global {
         readFile(packageName: string, filePath: string): Promise<string>;
         fetchText(packageName: string, url: string, options?: { headers?: Record<string, string> }): Promise<string>;
         invoke<T = unknown>(packageName: string, action: string, payload?: unknown): Promise<T>;
+
+        /**
+         * Tier 3 — Subscribe to interaction requests pushed from main.
+         * Each request contains a requestId, packageName, promptKey, and payload.
+         * Call sendInteractionResponse with the same requestId to unblock the main-process handler.
+         * Returns an unsubscribe function.
+         */
+        onInteractionRequest(callback: (req: {
+          requestId: string;
+          packageName: string;
+          promptKey: string;
+          payload: unknown;
+        }) => void): () => void;
+
+        /**
+         * Tier 3 — Send the user's interaction response back to main.
+         * Called by PluginInteractionService after submit or cancel.
+         */
+        sendInteractionResponse(response: {
+          requestId: string;
+          ok: boolean;
+          value?: unknown;
+          reason?: 'cancelled' | 'dismissed' | 'timeout' | 'renderer-unavailable';
+        }): void;
       };
 
       // Runner - execution-based architecture

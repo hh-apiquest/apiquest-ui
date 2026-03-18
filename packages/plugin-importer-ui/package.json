@@ -32,10 +32,9 @@
     "capabilities": {
       "provides": {
         "importFormats": [
-          "postman-v2.1",
-          "insomnia-json",
-          "openapi-3.0",
-          "openapi-3.1"
+          "postman",
+          "insomnia",
+          "openapi"
         ]
       }
     }
@@ -50,9 +49,13 @@
   "devDependencies": {
     "@apiquest/plugin-ui-types": "workspace:*",
     "@apiquest/types": "^1.1.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/react": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.3.0",
     "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
   }
 }

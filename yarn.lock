@@ -139,8 +139,10 @@ __metadata:
   dependencies:
     "@apiquest/plugin-ui-types": "workspace:*"
     "@apiquest/types": "npm:^1.1.0"
+    "@types/js-yaml": "npm:^4.0.9"
     "@types/react": "npm:^18.2.0"
     "@vitejs/plugin-react": "npm:^4.2.0"
+    js-yaml: "npm:^4.1.1"
     typescript: "npm:^5.3.0"
     vite: "npm:^5.0.0"
   peerDependencies:
@@ -3281,6 +3283,13 @@ __metadata:
   version: 4.2.0
   resolution: "@types/http-cache-semantics@npm:4.2.0"
   checksum: 10c0/82dd33cbe7d4843f1e884a251c6a12d385b62274353b9db167462e7fbffdbb3a83606f9952203017c5b8cabbd7b9eef0cf240a3a9dedd20f69875c9701939415
+  languageName: node
+  linkType: hard
+
+"@types/js-yaml@npm:^4.0.9":
+  version: 4.0.9
+  resolution: "@types/js-yaml@npm:4.0.9"
+  checksum: 10c0/24de857aa8d61526bbfbbaa383aa538283ad17363fcd5bb5148e2c7f604547db36646440e739d78241ed008702a8920665d1add5618687b6743858fae00da211
   languageName: node
   linkType: hard
 

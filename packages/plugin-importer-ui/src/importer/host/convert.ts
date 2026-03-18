@@ -1,7 +1,7 @@
 import type { PluginSandboxConsole } from '@apiquest/plugin-ui-types';
 
-import { convertPostmanV21 } from './postman';
-import { convertInsomniaJson } from './insomnia';
+import { convertPostman } from './postman';
+import { convertInsomnia } from './insomnia';
 import { convertOpenApi } from './openapi';
 import type { ConvertPayload, ImportCollectionResult, ImportConvertOptions } from './types';
 
@@ -39,18 +39,17 @@ export function convertImportByFormat(
   logger: PluginSandboxConsole,
   options?: ImportConvertOptions
 ): ImportCollectionResult {
-  if (format === 'postman-v2.1') {
-    return convertPostmanV21(data, logger, options);
+  if (format === 'postman') {
+    return convertPostman(data, logger, options);
   }
 
-  if (format === 'insomnia-json') {
-    return convertInsomniaJson(data, logger, options);
+  if (format === 'insomnia') {
+    return convertInsomnia(data, logger, options);
   }
 
-  if (format === 'openapi-3.0' || format === 'openapi-3.1') {
-    return convertOpenApi(data, format, logger, options);
+  if (format === 'openapi') {
+    return convertOpenApi(data, logger, options);
   }
 
   throw new Error(`[plugin-importer-ui] Unsupported import format: ${format}`);
 }
-

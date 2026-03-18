@@ -223,6 +223,37 @@ const api = {
 
     invoke: <T = unknown>(packageName: string, action: string, payload?: unknown): Promise<T> =>
       ipcRenderer.invoke('host:invoke', packageName, action, payload),
+
+    /**
+     * Tier 3 — Subscribe to interaction requests pushed from main.
+     * The callback receives the full request object containing requestId,
+     * packageName, promptKey, and payload.
+     * Returns an unsubscribe function.
+     */
+    onInteractionRequest: (callback: (req: {
+      requestId: string;
+      packageName: string;
+      promptKey: string;
+      payload: unknown;
+    }) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, req: unknown): void =>
+        callback(req as { requestId: string; packageName: string; promptKey: string; payload: unknown });
+      ipcRenderer.on('host:interaction:request', handler);
+      return () => ipcRenderer.off('host:interaction:request', handler);
+    },
+
+    /**
+     * Tier 3 — Send the user's interaction response back to the main process.
+     * Called by PluginInteractionService after the user submits or cancels.
+     */
+    sendInteractionResponse: (response: {
+      requestId: string;
+      ok: boolean;
+      value?: unknown;
+      reason?: 'cancelled' | 'dismissed' | 'timeout' | 'renderer-unavailable';
+    }): void => {
+      ipcRenderer.send('host:interaction:response', response);
+    },
   },
 };
 

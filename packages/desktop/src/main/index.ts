@@ -13,7 +13,7 @@ import { registerRunnerHandlers } from './handlers/runner.js';
 import { registerWindowHandlers } from './handlers/window.js';
 import { registerPluginsHandlers } from './handlers/plugins.js';
 import { registerAiHandlers } from './handlers/ai.js';
-import { registerHostHandlers } from './handlers/host.js';
+import { registerHostHandlers, setInteractionWindow } from './handlers/host.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,6 +63,10 @@ function createWindow(): void {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+
+  // Register the main window as the interaction portal host.
+  // setInteractionWindow attaches destroyed/reload cleanup internally.
+  setInteractionWindow(mainWindow);
 
   // Load renderer
   if (process.env.NODE_ENV === 'development') {

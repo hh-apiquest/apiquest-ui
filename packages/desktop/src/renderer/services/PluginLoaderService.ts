@@ -7,10 +7,24 @@ import type {
   VariableResolverService,
   PluginHostBridge,
   ScriptIntellisenseContext,
-  ScriptIntellisense
+  ScriptIntellisense,
+  PluginInteractionRegistration,
 } from '@apiquest/plugin-ui-types';
 import { pluginManagerService } from './PluginManagerService';
 import { ScriptIntellisenseManager } from './ScriptIntellisenseManager';
+import { pluginInteractionService } from './PluginInteractionService';
+
+/** Type guard: check if an unknown plugin object provides interaction registrations. */
+function hasInteractionRegistrations(
+  plugin: unknown
+): plugin is { getInteractionRegistrations(): PluginInteractionRegistration[] } {
+  return (
+    typeof plugin === 'object' &&
+    plugin !== null &&
+    'getInteractionRegistrations' in plugin &&
+    typeof (plugin as Record<string, unknown>).getInteractionRegistrations === 'function'
+  );
+}
 
 // Import reusable editors
 import {
@@ -60,9 +74,14 @@ class PluginLoaderService {
   
   /**
    * Initialize: inject per-plugin contexts into all loaded plugins.
+   * Also starts the PluginInteractionService so the portal can receive
+   * host:interaction:request events from the main process.
    */
   initialize(theme: 'light' | 'dark' = 'light') {
     this.currentTheme = theme;
+    // Tier 3 — must be initialized before injectUIContext so any interactions
+    // queued during plugin setup are handled correctly.
+    pluginInteractionService.initialize();
     this.injectUIContext();
     console.log('[PluginLoader] Per-plugin UI contexts injected');
   }
@@ -141,25 +160,42 @@ class PluginLoaderService {
   }
   
   /**
+   * Tier 3 helper — if the plugin implements getInteractionRegistrations(), collect and
+   * register its UI components with PluginInteractionService.
+   */
+  private maybeRegisterInteractions(packageName: string, plugin: unknown): void {
+    if (hasInteractionRegistrations(plugin)) {
+      const regs = plugin.getInteractionRegistrations();
+      if (regs.length > 0) {
+        pluginInteractionService.registerPlugin(packageName, regs);
+      }
+    }
+  }
+
+  /**
    * Inject per-plugin scoped UI contexts into all plugins from PluginManagerService.
    * Each plugin type uses its npm package name as the host bridge scope key.
+   * After setup(), any Tier 3 interaction registrations are forwarded to PluginInteractionService.
    */
   private injectUIContext() {
     // Protocol plugins — use getAllProtocolPluginEntries() for packageName
     pluginManagerService.getAllProtocolPluginEntries().forEach(({ packageName, plugin }) => {
       plugin.setup(this.createUIContext(packageName));
+      this.maybeRegisterInteractions(packageName, plugin);
       console.log(`[PluginLoader] Injected context into protocol plugin: ${packageName}`);
     });
     
     // Auth plugins — use getAllAuthPluginEntries() for packageName
     pluginManagerService.getAllAuthPluginEntries().forEach(({ packageName, plugin }) => {
       plugin.setup(this.createUIContext(packageName));
+      this.maybeRegisterInteractions(packageName, plugin);
       console.log(`[PluginLoader] Injected context into auth plugin: ${packageName}`);
     });
 
     // Importer plugins — map key IS the packageName
     pluginManagerService.getAllImporterPluginEntries().forEach(({ packageName, plugin }) => {
       plugin.setup(this.createUIContext(packageName));
+      this.maybeRegisterInteractions(packageName, plugin);
       console.log(`[PluginLoader] Injected context into importer plugin: ${packageName}`);
     });
     
@@ -167,12 +203,14 @@ class PluginLoaderService {
     pluginManagerService.on('protocolPluginRegistered', (plugin: any) => {
       const packageName = pluginManagerService.getPackageNameForProtocol(plugin.protocol) ?? plugin.protocol;
       plugin.setup(this.createUIContext(packageName));
+      this.maybeRegisterInteractions(String(packageName), plugin);
       console.log(`[PluginLoader] Auto-setup protocol plugin: ${packageName}`);
     });
     
     pluginManagerService.on('authPluginRegistered', (plugin: any) => {
       const packageName = pluginManagerService.getPackageNameForAuthType(plugin.type) ?? plugin.type;
       plugin.setup(this.createUIContext(packageName));
+      this.maybeRegisterInteractions(String(packageName), plugin);
       console.log(`[PluginLoader] Auto-setup auth plugin: ${packageName}`);
     });
 
@@ -183,6 +221,7 @@ class PluginLoaderService {
       const entry = allEntries.find(e => e.plugin === plugin);
       const resolvedPackageName = entry?.packageName ?? packageName ?? 'unknown';
       plugin.setup(this.createUIContext(resolvedPackageName));
+      this.maybeRegisterInteractions(resolvedPackageName, plugin);
       console.log(`[PluginLoader] Auto-setup importer plugin: ${resolvedPackageName}`);
     });
 

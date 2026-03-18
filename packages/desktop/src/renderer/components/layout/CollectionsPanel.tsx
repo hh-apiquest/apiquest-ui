@@ -104,20 +104,19 @@ export function CollectionsPanel() {
         fileExtensions,
         sourceKind
       });
-      if (!result) return; // User cancelled the dialog
+      if (result === null) return; // User cancelled the OS file dialog
       if (!result.success) {
-        const msg = result.errors?.join('\n') ?? 'Import failed';
-        console.error('[CollectionsPanel] Import failed:', msg);
-        alert(`Import failed: ${msg}`);
+        console.error('[CollectionsPanel] Import failed:', result.errors?.join('\n'));
         return;
       }
-      if (result.warnings && result.warnings.length > 0) {
+      if (result.warnings !== undefined && result.warnings.length > 0) {
         console.warn('[CollectionsPanel] Import warnings:', result.warnings);
       }
       await refreshWorkspace();
     } catch (error) {
-      console.error('[CollectionsPanel] Failed to import collection:', error);
-      alert('Import failed. Check the console for details.');
+      // Unexpected IPC-level error (not a plugin-reported failure).
+      // The plugin may have already shown a ui.alert before this propagated.
+      console.error('[CollectionsPanel] Import failed:', error);
     }
   };
 

@@ -1,5 +1,14 @@
 import React from 'react';
-import type { IImporterPluginUI, PluginUIContext } from '@apiquest/plugin-ui-types';
+import type {
+  IImporterPluginUI,
+  PluginUIContext,
+  PluginInteractionRegistration,
+} from '@apiquest/plugin-ui-types';
+import type * as RadixTypes from '@radix-ui/themes';
+import { createInsomniaPreConvertDialog } from './interactions/InsomniaPreConvertDialog';
+import { createInsomniaFailureDialog } from './interactions/InsomniaFailureDialog';
+import { createPostmanPreConvertDialog } from './interactions/PostmanPreConvertDialog';
+import { createImportFailureDialog } from './interactions/ImportFailureDialog';
 
 import {
   FILE_EXTENSIONS,
@@ -55,7 +64,7 @@ function getSettings(pluginSettings: Record<string, unknown> | undefined): Impor
 const importerPlugin: IImporterPluginUI = {
   name: 'ApiQuest Importer',
   version: '0.1.0',
-  description: 'Imports Postman v2.1, Insomnia export JSON, and OpenAPI 3.x into ApiQuest collections',
+  description: 'Imports Postman v2.1, Insomnia (JSON/YAML), and OpenAPI 3.x into ApiQuest collections',
 
   importFormats: [...IMPORT_FORMATS],
 
@@ -63,6 +72,37 @@ const importerPlugin: IImporterPluginUI = {
 
   setup(context: PluginUIContext): void {
     uiContext = context;
+  },
+
+  /**
+   * Tier 3 — Register interaction components used by the Insomnia host-bundle
+   * when it calls ui.prompt('insomnia:pre-convert-options') and
+   * ui.prompt('insomnia:failure').
+   *
+   * The Radix namespace from PluginUIContext is captured via closure and passed
+   * to the component factories so that dialogs render consistently with the
+   * desktop UI theme.
+   */
+  getInteractionRegistrations(): PluginInteractionRegistration[] {
+    const RT = (uiContext?.Radix ?? null) as typeof RadixTypes | null;
+    return [
+      {
+        promptKey: 'insomnia:pre-convert-options',
+        Component: createInsomniaPreConvertDialog(RT),
+      },
+      {
+        promptKey: 'insomnia:failure',
+        Component: createInsomniaFailureDialog(RT),
+      },
+      {
+        promptKey: 'postman:pre-convert-options',
+        Component: createPostmanPreConvertDialog(RT),
+      },
+      {
+        promptKey: 'postman:failure',
+        Component: createImportFailureDialog(RT, 'Postman'),
+      },
+    ];
   },
 
   getDefaultSettings(): Record<string, unknown> {

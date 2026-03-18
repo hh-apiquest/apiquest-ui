@@ -7,14 +7,26 @@ export type ScriptConversionMode = 'rule' | 'ai';
 export type ImportConvertOptions = {
   convertScripts?: boolean;
   scriptConversionMode?: ScriptConversionMode;
+  /**
+   * When true, unconverted pm.* patterns in scripts produce converter warnings (default).
+   * When false, they are silently skipped.
+   * This is a converter option only — it does NOT affect the collection's strictMode.
+   */
   strictScriptConversion?: boolean;
+  /**
+   * Controls the collection's runtime options.strictMode field.
+   * strictMode = true (default): Conditional test declarations not allowed;
+   *   tests wrapped in try/catch not allowed; deterministic test counting required.
+   * strictMode = false: Conditional tests and dynamic test counts are allowed.
+   */
+  collectionStrictMode?: boolean;
   aiPrompt?: string;
 };
 
 export type PostmanDescription = string | { content?: string; type?: string; version?: unknown } | null;
 
 export type PostmanCollection = {
-  info?: { name?: string; description?: PostmanDescription; _postman_id?: string };
+  info?: { name?: string; description?: PostmanDescription; _postman_id?: string; _postman_schema?: string };
   item?: PostmanItem[];
   variable?: PostmanVariable[];
   auth?: PostmanAuth;

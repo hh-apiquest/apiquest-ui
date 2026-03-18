@@ -4,6 +4,7 @@ import { AppProviders } from './contexts';
 import { MainLayout } from './components/layout';
 import { pluginLoader, pluginManagerService } from './services';
 import { useTheme } from './contexts';
+import { PluginInteractionPortal } from './components/plugins/PluginInteractionPortal';
 
 pluginLoader.initialize('light');
 console.log('ApiQuest Desktop initialized');
@@ -58,6 +59,8 @@ function AppContent() {
       scaling="95%"
     >
       <MainLayout />
+      {/* Tier 3 portal must be inside Theme so Radix Dialog layer tokens (CSS vars) are available */}
+      <PluginInteractionPortal />
     </Theme>
   );
 }
