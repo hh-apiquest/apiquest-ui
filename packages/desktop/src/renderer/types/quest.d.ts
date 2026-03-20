@@ -197,11 +197,13 @@ declare global {
         // Folder operations
         addFolder: (workspaceId: string, collectionId: string, folderName: string, parentId: string | null) => Promise<string>;
         renameFolder: (workspaceId: string, collectionId: string, folderId: string, newName: string) => Promise<void>;
+        moveFolder: (workspaceId: string, sourceCollectionId: string, folderId: string, targetCollectionId: string, targetParentId: string | null, targetIndex: number) => Promise<void>;
         deleteFolder: (workspaceId: string, collectionId: string, folderId: string) => Promise<void>;
         
         // Request operations
         addRequest: (workspaceId: string, collectionId: string, requestName: string, parentId: string | null) => Promise<string>;
         renameRequest: (workspaceId: string, collectionId: string, requestId: string, newName: string) => Promise<void>;
+        moveRequest: (workspaceId: string, sourceCollectionId: string, requestId: string, targetCollectionId: string, targetParentId: string | null, targetIndex: number) => Promise<void>;
         duplicateRequest: (workspaceId: string, collectionId: string, requestId: string, parentId: string | null) => Promise<string>;
         deleteRequest: (workspaceId: string, collectionId: string, requestId: string) => Promise<void>;
       };

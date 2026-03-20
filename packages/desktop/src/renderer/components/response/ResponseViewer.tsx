@@ -61,7 +61,7 @@ export function ResponseViewer({ request, response, events, error, pluginUI, uiC
     };
   }, [response, events, summaryView]);
 
-  if (error || !response) {
+  if (!response) {
     if (error) {
       // Script or execution error (not HTTP error)
       // Extract clean error message from IPC error
@@ -99,26 +99,6 @@ export function ResponseViewer({ request, response, events, error, pluginUI, uiC
     );
   }
 
-  if (summaryView?.error) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-4 py-2 border-b" style={{ background: '#fee2e2', borderColor: 'var(--gray-6)' }}>
-          <h3 className="text-xs font-medium" style={{ color: '#b91c1c' }}>Request Failed</h3>
-          <div className="flex items-center gap-3 text-xs" style={{ color: '#dc2626' }}>
-            <span>Time: {summaryView.duration || 0}ms</span>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto p-4">
-          <div style={{ color: '#ef4444' }}>
-            <div className="font-semibold mb-2">Error:</div>
-            <pre className="text-sm p-3 rounded" style={{ background: '#fee2e2' }}>{summaryView.error}</pre>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-4 py-2 border-b" style={{ background: 'var(--gray-2)', borderColor: 'var(--gray-6)' }}>
@@ -150,6 +130,13 @@ export function ResponseViewer({ request, response, events, error, pluginUI, uiC
           <span>Size: {formatBytes(metadata?.size || 0)}</span>
         </div>
       </div>
+
+      {summaryView?.error && (
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--gray-6)', background: '#fee2e2', color: '#b91c1c' }}>
+          <div className="text-xs font-medium" style={{ marginBottom: '4px' }}>Request Failed</div>
+          <div className="text-xs">{summaryView.error}</div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden min-h-0">
         <Tabs.Root defaultValue={allTabs[0]?.id} className="flex flex-col h-full">

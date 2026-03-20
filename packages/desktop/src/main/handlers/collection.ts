@@ -7,18 +7,143 @@ import { workspaceRegistry, collectionRegistry } from './workspace.js';
 import { secretVariableService } from '../SecretVariableService.js';
 import { maskSecretRecord, maskVariablesForLog } from '../utils/mask.js';
 
+type CollectionNode = {
+  id: string;
+  type: 'folder' | 'request';
+  name?: string;
+  items?: CollectionNode[];
+  [key: string]: unknown;
+};
+
+type CollectionDocument = {
+  info: {
+    id: string;
+    name: string;
+  };
+  items: CollectionNode[];
+  [key: string]: unknown;
+};
+
+type RemoveNodeResult = {
+  node: CollectionNode;
+  sourceParentId: string | null;
+  sourceIndex: number;
+};
+
+function isFolderNode(node: CollectionNode): node is CollectionNode & { items: CollectionNode[] } {
+  return node.type === 'folder' && Array.isArray(node.items);
+}
+
+async function loadCollectionDocument(workspaceId: string, collectionId: string): Promise<CollectionDocument> {
+  const collectionPath = getCollectionPath(workspaceId, collectionId);
+  const content = await fs.readFile(collectionPath, 'utf-8');
+  return JSON.parse(content) as CollectionDocument;
+}
+
+async function saveCollectionDocument(workspaceId: string, collectionId: string, collection: CollectionDocument): Promise<void> {
+  const collectionPath = getCollectionPath(workspaceId, collectionId);
+  const newContent = JSON.stringify(collection, null, 2);
+  await fs.writeFile(collectionPath, newContent, 'utf-8');
+}
+
+function findFolderNode(items: CollectionNode[], folderId: string): CollectionNode | null {
+  for (const item of items) {
+    if (item.id === folderId && isFolderNode(item)) {
+      return item;
+    }
+
+    if (isFolderNode(item)) {
+      const found = findFolderNode(item.items, folderId);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function removeNodeById(items: CollectionNode[], nodeId: string, parentId: string | null = null): RemoveNodeResult | null {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+
+    if (item.id === nodeId) {
+      const [node] = items.splice(index, 1);
+      return {
+        node,
+        sourceParentId: parentId,
+        sourceIndex: index,
+      };
+    }
+
+    if (isFolderNode(item)) {
+      const nestedResult = removeNodeById(item.items, nodeId, item.id);
+      if (nestedResult !== null) {
+        return nestedResult;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getDestinationItems(items: CollectionNode[], targetParentId: string | null): CollectionNode[] {
+  if (targetParentId === null) {
+    return items;
+  }
+
+  const targetFolder = findFolderNode(items, targetParentId);
+  if (targetFolder === null || !isFolderNode(targetFolder)) {
+    throw new Error(`Target parent folder not found: ${targetParentId}`);
+  }
+
+  return targetFolder.items;
+}
+
+function clampIndex(index: number, length: number): number {
+  if (index < 0) {
+    return 0;
+  }
+
+  if (index > length) {
+    return length;
+  }
+
+  return index;
+}
+
+function isDescendantFolder(folder: CollectionNode, targetFolderId: string): boolean {
+  if (!isFolderNode(folder)) {
+    return false;
+  }
+
+  const folderItems = folder.items;
+
+  for (const item of folderItems) {
+    if (item.id === targetFolderId && isFolderNode(item)) {
+      return true;
+    }
+
+    if (isFolderNode(item) && isDescendantFolder(item, targetFolderId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Helper function to get collection file path
 function getCollectionPath(workspaceId: string, collectionId: string): string {
   const workspacePath = workspaceRegistry.get(workspaceId);
-  if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+  if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
   
   const fileName = collectionRegistry.get(collectionId);
-  if (!fileName) throw new Error(`Collection not found: ${collectionId}`);
+  if (fileName === undefined) throw new Error(`Collection not found: ${collectionId}`);
   
   return path.join(workspacePath, 'collections', fileName);
 }
 
-export function registerCollectionHandlers() {
+export function registerCollectionHandlers(): void {
   // Collection operations
   ipcMain.handle('workspace:loadCollection', async (_event, workspaceId: string, collectionId: string) => {
     const collectionPath = getCollectionPath(workspaceId, collectionId);
@@ -413,4 +538,106 @@ ipcMain.handle('workspace:renameCollection', async (_event, workspaceId: string,
     const newContent = JSON.stringify(collection, null, 2);
     await fs.writeFile(collectionPath, newContent, 'utf-8');
   });
+
+  ipcMain.handle(
+    'workspace:moveRequest',
+    async (
+      _event,
+      workspaceId: string,
+      sourceCollectionId: string,
+      requestId: string,
+      targetCollectionId: string,
+      targetParentId: string | null,
+      targetIndex: number,
+    ) => {
+      const sourceCollection = await loadCollectionDocument(workspaceId, sourceCollectionId);
+      const targetCollection = sourceCollectionId === targetCollectionId
+        ? sourceCollection
+        : await loadCollectionDocument(workspaceId, targetCollectionId);
+
+      const removeResult = removeNodeById(sourceCollection.items, requestId);
+      if (removeResult === null) {
+        throw new Error(`Request not found: ${requestId}`);
+      }
+
+      if (removeResult.node.type !== 'request') {
+        throw new Error(`Node is not a request: ${requestId}`);
+      }
+
+      const destinationItems = getDestinationItems(targetCollection.items, targetParentId);
+      const normalizedIndex = sourceCollectionId === targetCollectionId && removeResult.sourceParentId === targetParentId && removeResult.sourceIndex < targetIndex
+        ? clampIndex(targetIndex - 1, destinationItems.length)
+        : clampIndex(targetIndex, destinationItems.length);
+
+      const sameLocation = sourceCollectionId === targetCollectionId
+        && removeResult.sourceParentId === targetParentId
+        && removeResult.sourceIndex === normalizedIndex;
+
+      if (sameLocation) {
+        destinationItems.splice(removeResult.sourceIndex, 0, removeResult.node);
+        return;
+      }
+
+      destinationItems.splice(normalizedIndex, 0, removeResult.node);
+
+      await saveCollectionDocument(workspaceId, sourceCollectionId, sourceCollection);
+      if (sourceCollectionId !== targetCollectionId) {
+        await saveCollectionDocument(workspaceId, targetCollectionId, targetCollection);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'workspace:moveFolder',
+    async (
+      _event,
+      workspaceId: string,
+      sourceCollectionId: string,
+      folderId: string,
+      targetCollectionId: string,
+      targetParentId: string | null,
+      targetIndex: number,
+    ) => {
+      const sourceCollection = await loadCollectionDocument(workspaceId, sourceCollectionId);
+      const targetCollection = sourceCollectionId === targetCollectionId
+        ? sourceCollection
+        : await loadCollectionDocument(workspaceId, targetCollectionId);
+
+      const removeResult = removeNodeById(sourceCollection.items, folderId);
+      if (removeResult === null) {
+        throw new Error(`Folder not found: ${folderId}`);
+      }
+
+      if (!isFolderNode(removeResult.node)) {
+        throw new Error(`Node is not a folder: ${folderId}`);
+      }
+
+      if (targetParentId === folderId || isDescendantFolder(removeResult.node, targetParentId ?? '')) {
+        const restoreItems = getDestinationItems(sourceCollection.items, removeResult.sourceParentId);
+        restoreItems.splice(removeResult.sourceIndex, 0, removeResult.node);
+        throw new Error('Cannot move a folder into itself or one of its descendants');
+      }
+
+      const destinationItems = getDestinationItems(targetCollection.items, targetParentId);
+      const normalizedIndex = sourceCollectionId === targetCollectionId && removeResult.sourceParentId === targetParentId && removeResult.sourceIndex < targetIndex
+        ? clampIndex(targetIndex - 1, destinationItems.length)
+        : clampIndex(targetIndex, destinationItems.length);
+
+      const sameLocation = sourceCollectionId === targetCollectionId
+        && removeResult.sourceParentId === targetParentId
+        && removeResult.sourceIndex === normalizedIndex;
+
+      if (sameLocation) {
+        destinationItems.splice(removeResult.sourceIndex, 0, removeResult.node);
+        return;
+      }
+
+      destinationItems.splice(normalizedIndex, 0, removeResult.node);
+
+      await saveCollectionDocument(workspaceId, sourceCollectionId, sourceCollection);
+      if (sourceCollectionId !== targetCollectionId) {
+        await saveCollectionDocument(workspaceId, targetCollectionId, targetCollection);
+      }
+    },
+  );
 }

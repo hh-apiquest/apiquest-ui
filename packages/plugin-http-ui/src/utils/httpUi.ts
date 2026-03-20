@@ -35,20 +35,33 @@ export function ensureHttpMethod(value: unknown): HttpMethod {
 }
 
 export function getMonacoLanguageFromMime(mime: string): string {
-  switch (mime) {
-    case 'text/plain':
-      return 'plaintext';
-    case 'application/json':
-      return 'json';
-    case 'application/xml':
-      return 'xml';
-    case 'text/html':
-      return 'html';
-    case 'application/javascript':
-      return 'javascript';
-    default:
-      return 'plaintext';
+  const normalizedMime = mime.toLowerCase().split(';')[0].trim();
+
+  if (normalizedMime === 'application/json' || normalizedMime.endsWith('+json')) {
+    return 'json';
   }
+
+  if (normalizedMime === 'application/xml' || normalizedMime === 'text/xml' || normalizedMime.endsWith('+xml')) {
+    return 'xml';
+  }
+
+  if (normalizedMime === 'text/html') {
+    return 'html';
+  }
+
+  if (normalizedMime === 'application/javascript' || normalizedMime === 'text/javascript') {
+    return 'javascript';
+  }
+
+  if (normalizedMime === 'text/css') {
+    return 'css';
+  }
+
+  if (normalizedMime === 'text/plain') {
+    return 'plaintext';
+  }
+
+  return 'plaintext';
 }
 
 export function toHttpRequestData(data: Request['data']): HttpRequestWithUiData {

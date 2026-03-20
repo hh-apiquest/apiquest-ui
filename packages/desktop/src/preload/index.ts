@@ -89,7 +89,24 @@ const api = {
     
     renameFolder: (workspaceId: string, collectionId: string, folderId: string, newName: string) =>
       ipcRenderer.invoke('workspace:renameFolder', workspaceId, collectionId, folderId, newName),
-    
+
+    moveFolder: (
+      workspaceId: string,
+      sourceCollectionId: string,
+      folderId: string,
+      targetCollectionId: string,
+      targetParentId: string | null,
+      targetIndex: number,
+    ) => ipcRenderer.invoke(
+      'workspace:moveFolder',
+      workspaceId,
+      sourceCollectionId,
+      folderId,
+      targetCollectionId,
+      targetParentId,
+      targetIndex,
+    ),
+
     deleteFolder: (workspaceId: string, collectionId: string, folderId: string) =>
       ipcRenderer.invoke('workspace:deleteFolder', workspaceId, collectionId, folderId),
     
@@ -99,7 +116,24 @@ const api = {
     
     renameRequest: (workspaceId: string, collectionId: string, requestId: string, newName: string) =>
       ipcRenderer.invoke('workspace:renameRequest', workspaceId, collectionId, requestId, newName),
-    
+
+    moveRequest: (
+      workspaceId: string,
+      sourceCollectionId: string,
+      requestId: string,
+      targetCollectionId: string,
+      targetParentId: string | null,
+      targetIndex: number,
+    ) => ipcRenderer.invoke(
+      'workspace:moveRequest',
+      workspaceId,
+      sourceCollectionId,
+      requestId,
+      targetCollectionId,
+      targetParentId,
+      targetIndex,
+    ),
+
     duplicateRequest: (workspaceId: string, collectionId: string, requestId: string, parentId: string | null) =>
       ipcRenderer.invoke('workspace:duplicateRequest', workspaceId, collectionId, requestId, parentId),
     

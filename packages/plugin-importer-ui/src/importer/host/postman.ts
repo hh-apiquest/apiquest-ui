@@ -104,12 +104,12 @@ function convertScript(script: string | undefined, warnings: string[], contextNa
   result = result.replace(/\bpm\.expect\s*\(/g, 'expect(');
 
   // Response assertion helpers
-  result = result.replace(/\bpm\.response\.to\.have\.status\s*\((\d+)\)/g, 'quest.response.to.have.status($1)');
-  result = result.replace(/\bpm\.response\.to\.be\.ok\b/g, 'quest.response.to.be.ok');
-  result = result.replace(/\bpm\.response\.to\.be\.success\b/g, 'quest.response.to.be.success');
-  result = result.replace(/\bpm\.response\.to\.be\.clientError\b/g, 'quest.response.to.be.clientError');
-  result = result.replace(/\bpm\.response\.to\.be\.serverError\b/g, 'quest.response.to.be.serverError');
-  result = result.replace(/\bpm\.response\.to\.have\.header\s*\(([^)]+)\)/g, 'quest.response.to.have.header($1)');
+  result = result.replace(/\bpm\.response\.to\.have\.status\s*\((\d+)\)/g, 'expect(quest.response.to.have.status($1)).to.be.true');
+  result = result.replace(/\bpm\.response\.to\.be\.ok\b/g, 'expect(quest.response.to.be.ok).to.be.true');
+  result = result.replace(/\bpm\.response\.to\.be\.success\b/g, 'expect(quest.response.to.be.success).to.be.true');
+  result = result.replace(/\bpm\.response\.to\.be\.clientError\b/g, 'expect(quest.response.to.be.clientError).to.be.true');
+  result = result.replace(/\bpm\.response\.to\.be\.serverError\b/g, 'expect(quest.response.to.be.serverError).to.be.true');
+  result = result.replace(/\bpm\.response\.to\.have\.header\s*\(([^)]+)\)/g, 'expect(quest.response.to.have.header($1)).to.be.true');
   // jsonBody 2-arg form: pm.response.to.have.jsonBody('key', value) — quest only supports field existence;
   // expand to an equality assertion using quest.response.json()
   result = result.replace(
@@ -121,7 +121,7 @@ function convertScript(script: string | undefined, warnings: string[], contextNa
     'expect(quest.response.json()["$1"]).to.equal($2)'
   );
   // jsonBody 1-arg form: field-existence check maps 1:1
-  result = result.replace(/\bpm\.response\.to\.have\.jsonBody\s*\(([^)]+)\)/g, 'quest.response.to.have.jsonBody($1)');
+  result = result.replace(/\bpm\.response\.to\.have\.jsonBody\s*\(([^)]+)\)/g, 'expect(quest.response.to.have.jsonBody($1)).to.be.true');
 
   // Response body and headers
   result = result.replace(/\bpm\.response\.json\s*\(\)/g, 'quest.response.json()');
