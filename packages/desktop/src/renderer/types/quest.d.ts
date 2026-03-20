@@ -312,7 +312,7 @@ declare global {
         
         // Collection runner methods
         runCollection: (params: RunCollectionParams) => Promise<{ success: boolean; runId: string }>;
-        stopRun: (runId: string) => Promise<{ success: boolean }>;
+        stopRun: (executionId: string) => Promise<{ success: boolean }>;
         getRunStatus: (runId: string) => Promise<RunnerExecutionState | null>;
       };
     };

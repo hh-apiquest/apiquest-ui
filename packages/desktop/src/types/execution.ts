@@ -108,7 +108,7 @@ export interface RunRequestResult {
  */
 export interface ExecutionData {
   executionId: string;
-  status: 'idle' | 'running' | 'complete' | 'error';
+  status: 'idle' | 'running' | 'complete' | 'error' | 'cancelled';
   startTime: number;
   endTime?: number;
   

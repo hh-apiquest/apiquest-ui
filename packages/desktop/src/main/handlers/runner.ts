@@ -31,17 +31,17 @@ export function registerRunnerHandlers(mainWindow: BrowserWindow | null): void {
     }
   });
 
-  // Stop an active collection run
-  ipcMain.handle('runner:stopRun', async (event, runId: string) => {
+  // Stop an active request execution or collection run
+  ipcMain.handle('runner:stopRun', async (event, executionId: string) => {
     try {
-      console.log('[Main] Stopping run:', runId);
+      console.log('[Main] Stopping execution:', executionId);
       
-      const result = await runnerService.stopRun(runId);
+      const result = await runnerService.stopRun(executionId);
       
-      console.log('[Main] Run stopped:', runId);
+      console.log('[Main] Execution stopped:', executionId);
       return result;
     } catch (error: unknown) {
-      console.error('[Main] Stop run error:', error);
+      console.error('[Main] Stop execution error:', error);
       throw error;
     }
   });

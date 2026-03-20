@@ -153,7 +153,7 @@ const api = {
   runner: {
     runRequest: (params: any) => ipcRenderer.invoke('runner:runRequest', params),
     runCollection: (params: any) => ipcRenderer.invoke('runner:runCollection', params),
-    stopRun: (runId: string) => ipcRenderer.invoke('runner:stopRun', runId),
+    stopRun: (executionId: string) => ipcRenderer.invoke('runner:stopRun', executionId),
     getStatus: (runId: string) => ipcRenderer.invoke('runner:getStatus', runId),
     
     onExecutionEvent: (callback: (event: any) => void) => {

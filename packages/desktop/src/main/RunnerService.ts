@@ -228,6 +228,7 @@ class RunnerService {
     
     // Create fresh runner for this execution (ensures plugins are freshly loaded after devinstaller)
     const runner = new CollectionRunner({ pluginsDir: this.pluginsDir });
+    const abortController = new AbortController();
     
     // Store execution info
     this.activeExecutions.set(executionId, {
@@ -236,7 +237,8 @@ class RunnerService {
       type: 'request',
       sourceId: request.id,
       startTime: Date.now(),
-      status: 'running'
+      status: 'running',
+      abortController
     });
     
     // Subscribe to ALL runner events (standard + custom) and stream to renderer
@@ -270,7 +272,8 @@ class RunnerService {
           name: 'Active Environment',
           variables: variables.environment
         } : undefined,
-        globalVariables: variables?.global
+        globalVariables: variables?.global,
+        signal: abortController.signal
       });
 
       console.log('[RunnerService] executeRequest run options snapshot', {
@@ -315,7 +318,7 @@ class RunnerService {
       // Mark execution as failed
       const execution = this.activeExecutions.get(executionId);
       if (execution) {
-        execution.status = 'failed';
+        execution.status = abortController.signal.aborted ? 'cancelled' : 'failed';
       }
       
       throw error;
@@ -540,22 +543,36 @@ class RunnerService {
     const execution = this.activeExecutions.get(runId);
     const state = this.activeCollectionRuns.get(runId);
     
-    if (!execution || !state) {
-      console.warn(`[RunnerService] Cannot stop run ${runId}: not found`);
+    if (!execution) {
+      console.warn(`[RunnerService] Cannot stop execution ${runId}: not found`);
       return { success: false };
     }
     
-    console.log(`[RunnerService] Stopping run ${runId}`);
+    console.log(`[RunnerService] Stopping execution ${runId}`);
     
     // Abort the execution
     if (execution.abortController) {
       execution.abortController.abort('User cancelled execution');
     }
-    
+
+    execution.status = 'cancelled';
+
+    if (!state) {
+      this.streamEvent({
+        type: 'runnerStopped',
+        executionId: runId,
+        timestamp: Date.now(),
+        data: {
+          runId
+        }
+      });
+
+      return { success: true };
+    }
+
     // Update state
     state.status = 'stopped';
     state.completedAt = new Date();
-    execution.status = 'cancelled';
     
     // Send stop event
     this.streamEvent({

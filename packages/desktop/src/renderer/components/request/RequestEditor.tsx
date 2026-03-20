@@ -37,7 +37,6 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     theme: actualTheme
   }), [actualTheme]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSending, setIsSending] = useState(false);
   const [bypassExecutionControl, setBypassExecutionControl] = useState(false);
  const rootRef = useRef<HTMLDivElement | null>(null);
   const [responseHeight, setResponseHeight] = useState(240);
@@ -52,6 +51,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   const execution = tab.execution;
   const response = execution?.result ?? null;
   const events = execution?.events ?? [];
+  const isSending = execution?.status === 'running';
 
   console.log('[RequestEditor] Render - execution state:', {
     hasExecution: !!execution,
@@ -326,11 +326,30 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   };
 
   const handleSend = async () => {
-    if (isSending || !request || !workspace) return;
     if (!tab.execution) {
       console.error('[RequestEditor] Tab has no execution state, this should not happen');
       return;
     }
+
+    if (!workspace) {
+      return;
+    }
+
+    if (isSending) {
+      try {
+        await window.quest.runner.stopRun(tab.execution.executionId);
+        updateTabExecution(tab.id, {
+          status: 'cancelled',
+          endTime: Date.now(),
+          error: 'Request cancelled'
+        });
+      } catch (error) {
+        console.error('Failed to cancel request:', error);
+      }
+      return;
+    }
+
+    if (!request) return;
 
     // Make temporary tab permanent when sending request
     if (tab.isTemporary) {
@@ -342,12 +361,11 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     updateTabExecution(tab.id, {
       status: 'running',
       startTime: Date.now(),
+      endTime: undefined,
       events: [],
       result: undefined,
       error: undefined
     });
-
-    setIsSending(true);
 
     try {
       let collectionVariables: Record<string, VariableValue> = {};
@@ -443,15 +461,18 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       
     } catch (error) {
       console.error('Request failed:', error);
+
+      const wasCancelled =
+        error instanceof Error && /abort|cancel/i.test(error.message);
       
       // Update execution state with error
       updateTabExecution(tab.id, {
-        status: 'error',
+        status: wasCancelled ? 'cancelled' : 'error',
         endTime: Date.now(),
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: wasCancelled
+          ? 'Request cancelled'
+          : (error instanceof Error ? error.message : 'Unknown error')
       });
-    } finally {
-      setIsSending(false);
     }
   };
 
