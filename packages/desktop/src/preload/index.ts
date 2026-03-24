@@ -1,25 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
+import type { AICompletionRequest, AICompletionResponse } from '../main/types/ai.js';
+import type {
+  PluginInteractionRequest,
+  PluginInteractionResponse,
+} from '../main/types/host.js';
+import type { QuestApi } from '../main/types/preload.js';
+import type { MarketplacePlugin, ScannedPlugin } from '../main/types/plugins.js';
+import type { RunCollectionParams, RunnerExecutionState } from '../main/types/runner.js';
+import type { ImportCollectionParams, WorkspaceMetadata } from '../main/types/workspace.js';
+import type { AppSettings } from '../main/SettingsService.js';
+import type { ExecutionEvent, RunRequestParams } from '../types/execution.js';
+import type { Collection, Environment, VariableValue } from '@apiquest/types';
 
-type AICompletionRequest = {
-  prompt: string;
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-  metadata?: Record<string, unknown>;
-};
-
-type AICompletionResponse = {
-  text: string;
-  model?: string;
-  usage?: {
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-};
-
-const api = {
+const api: QuestApi = {
   // Workspace operations
   workspace: {
     // Workspace management
@@ -41,7 +35,7 @@ const api = {
     getMetadata: (workspacePath: string) =>
       ipcRenderer.invoke('workspace:getMetadata', workspacePath),
     
-    updateMetadata: (workspacePath: string, updates: any) =>
+    updateMetadata: (workspacePath: string, updates: Partial<WorkspaceMetadata>) =>
       ipcRenderer.invoke('workspace:updateMetadata', workspacePath, updates),
     
     listWithMetadata: () =>
@@ -51,7 +45,7 @@ const api = {
     loadCollection: (workspaceId: string, collectionId: string) =>
       ipcRenderer.invoke('workspace:loadCollection', workspaceId, collectionId),
     
-    saveCollection: (workspaceId: string, collectionId: string, collection: any) =>
+    saveCollection: (workspaceId: string, collectionId: string, collection: Collection) =>
       ipcRenderer.invoke('workspace:saveCollection', workspaceId, collectionId, collection),
     
     createCollection: (workspaceId: string, name: string, protocol: string) =>
@@ -66,17 +60,12 @@ const api = {
     deleteCollection: (workspaceId: string, collectionId: string) =>
       ipcRenderer.invoke('workspace:deleteCollection', workspaceId, collectionId),
     
-    updateCollectionVariables: (workspaceId: string, collectionId: string, variables: any) =>
+    updateCollectionVariables: (workspaceId: string, collectionId: string, variables: Record<string, VariableValue>) =>
       ipcRenderer.invoke('workspace:updateCollectionVariables', workspaceId, collectionId, variables),
     
     importCollection: (
       workspaceId: string,
-      params?: {
-        pluginPackageName: string;
-        format: string;
-        fileExtensions: string[];
-        sourceKind: 'file' | 'directory';
-      }
+      params?: ImportCollectionParams
     ) =>
       ipcRenderer.invoke('workspace:importCollection', workspaceId, params),
     
@@ -146,7 +135,7 @@ const api = {
     load: (workspaceId: string, fileName: string) =>
       ipcRenderer.invoke('environment:load', workspaceId, fileName),
     
-    save: (workspaceId: string, fileName: string, environment: any) =>
+    save: (workspaceId: string, fileName: string, environment: Environment) =>
       ipcRenderer.invoke('environment:save', workspaceId, fileName, environment),
     
     create: (workspaceId: string, name: string) =>
@@ -165,33 +154,33 @@ const api = {
   // Global variables
   globalVariables: {
     load: () => ipcRenderer.invoke('globalVariables:load'),
-    save: (variables: any) => ipcRenderer.invoke('globalVariables:save', variables),
+    save: (variables: Record<string, VariableValue>) => ipcRenderer.invoke('globalVariables:save', variables),
   },
 
   // App settings (settings.json in userData)
   settings: {
     getAll: () => ipcRenderer.invoke('settings:getAll'),
     get: (path: string) => ipcRenderer.invoke('settings:get', path),
-    update: (partial: any) => ipcRenderer.invoke('settings:update', partial),
-    set: (path: string, value: any) => ipcRenderer.invoke('settings:set', path, value),
+    update: (partial: AppSettings) => ipcRenderer.invoke('settings:update', partial),
+    set: (path: string, value: unknown) => ipcRenderer.invoke('settings:set', path, value),
   },
 
   // Session management (sessions.json in userData)
   session: {
     get: (workspaceId: string) => ipcRenderer.invoke('session:get', workspaceId),
-    save: (workspaceId: string, session: any) => ipcRenderer.invoke('session:save', workspaceId, session),
-    update: (workspaceId: string, updates: any) => ipcRenderer.invoke('session:update', workspaceId, updates),
+    save: (workspaceId, session) => ipcRenderer.invoke('session:save', workspaceId, session),
+    update: (workspaceId, updates) => ipcRenderer.invoke('session:update', workspaceId, updates),
   },
 
   // Runner - execution-based architecture
   runner: {
-    runRequest: (params: any) => ipcRenderer.invoke('runner:runRequest', params),
-    runCollection: (params: any) => ipcRenderer.invoke('runner:runCollection', params),
+    runRequest: (params: RunRequestParams) => ipcRenderer.invoke('runner:runRequest', params),
+    runCollection: (params: RunCollectionParams) => ipcRenderer.invoke('runner:runCollection', params),
     stopRun: (executionId: string) => ipcRenderer.invoke('runner:stopRun', executionId),
-    getStatus: (runId: string) => ipcRenderer.invoke('runner:getStatus', runId),
+    getStatus: (runId: string): Promise<RunnerExecutionState | null> => ipcRenderer.invoke('runner:getStatus', runId),
     
-    onExecutionEvent: (callback: (event: any) => void) => {
-      const handler = (_event: any, executionEvent: any) => callback(executionEvent);
+    onExecutionEvent: (callback: (event: ExecutionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, executionEvent: ExecutionEvent): void => callback(executionEvent);
       ipcRenderer.on('execution:event', handler);
       
       // Return unsubscribe function
@@ -212,7 +201,7 @@ const api = {
   // Plugin management
   plugins: {
     ensureDevInstalled: () => ipcRenderer.invoke('plugins:ensureDevInstalled'),
-    scan: () => ipcRenderer.invoke('plugins:scan'),
+    scan: (): Promise<ScannedPlugin[]> => ipcRenderer.invoke('plugins:scan'),
     /**
      * Check whether npm and git are available on the system PATH.
      * Returns { npm: string|null, git: string|null } where string is the version.
@@ -226,7 +215,7 @@ const api = {
     install: (packageNameOrUrl: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('plugins:install', packageNameOrUrl),
     remove: (pluginName: string) => ipcRenderer.invoke('plugins:remove', pluginName),
-    searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all') => ipcRenderer.invoke('plugins:searchMarketplace', query, type),
+    searchMarketplace: (query: string, type?: ApiquestMetadata['type'] | 'all'): Promise<MarketplacePlugin[]> => ipcRenderer.invoke('plugins:searchMarketplace', query, type),
   },
 
   ai: {
@@ -262,16 +251,11 @@ const api = {
      * Tier 3 — Subscribe to interaction requests pushed from main.
      * The callback receives the full request object containing requestId,
      * packageName, promptKey, and payload.
-     * Returns an unsubscribe function.
-     */
-    onInteractionRequest: (callback: (req: {
-      requestId: string;
-      packageName: string;
-      promptKey: string;
-      payload: unknown;
-    }) => void): (() => void) => {
+      * Returns an unsubscribe function.
+      */
+    onInteractionRequest: (callback: (req: PluginInteractionRequest) => void): (() => void) => {
       const handler = (_event: Electron.IpcRendererEvent, req: unknown): void =>
-        callback(req as { requestId: string; packageName: string; promptKey: string; payload: unknown });
+        callback(req as PluginInteractionRequest);
       ipcRenderer.on('host:interaction:request', handler);
       return () => ipcRenderer.off('host:interaction:request', handler);
     },
@@ -279,13 +263,8 @@ const api = {
     /**
      * Tier 3 — Send the user's interaction response back to the main process.
      * Called by PluginInteractionService after the user submits or cancels.
-     */
-    sendInteractionResponse: (response: {
-      requestId: string;
-      ok: boolean;
-      value?: unknown;
-      reason?: 'cancelled' | 'dismissed' | 'timeout' | 'renderer-unavailable';
-    }): void => {
+      */
+    sendInteractionResponse: (response: PluginInteractionResponse): void => {
       ipcRenderer.send('host:interaction:response', response);
     },
   },

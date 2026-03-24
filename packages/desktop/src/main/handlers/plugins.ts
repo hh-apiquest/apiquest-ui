@@ -7,6 +7,14 @@ import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
+import {
+  isMarketplacePackageJson,
+  isPluginPackageJson,
+  type MarketplacePackageJson,
+  type MarketplacePlugin,
+  type PluginPackageJson,
+  type ScannedPlugin,
+} from '../types/plugins.js';
 import { registerPluginProtocol } from '../protocols/plugin-protocol.js';
 import { settingsService } from '../SettingsService.js';
 import { installWorkspacePlugins } from '../DevPluginInstaller.js';
@@ -14,6 +22,28 @@ import { loadPluginHostBundle, clearPluginHostBundle } from './host.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return String((error as { code: unknown }).code);
+  }
+
+  return String(error);
+}
+
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function isDesktopRuntime(runtime: ApiquestMetadata['runtime'] | undefined): boolean {
+  return Array.isArray(runtime)
+    ? runtime.includes('desktop')
+    : runtime === 'desktop';
+}
 
 /**
  * Resolve the path to the bundled npm CLI script.
@@ -48,7 +78,7 @@ function getBundledNpmCli(): string | null {
 async function runNpm(args: string[], options: { maxBuffer?: number; cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
   const bundledCli = getBundledNpmCli();
 
-  if (bundledCli) {
+  if (bundledCli !== null) {
     const npmEnv = {
       ...process.env,
       // Run Electron executable as a Node.js process, not as a desktop app.
@@ -87,7 +117,7 @@ async function checkGitAvailable(): Promise<string | null> {
   let gitBin = 'git';
   try {
     const settings = await settingsService.getAll();
-    if (settings.tools?.gitPath?.trim()) {
+    if (isNonEmptyString(settings.tools?.gitPath)) {
       gitBin = settings.tools.gitPath.trim();
     }
   } catch {
@@ -96,7 +126,8 @@ async function checkGitAvailable(): Promise<string | null> {
 
   try {
     const { stdout } = await execAsync(`"${gitBin}" --version`);
-    return stdout.trim().split('\n')[0] || 'unknown';
+    const version = stdout.trim().split('\n')[0];
+    return version !== '' ? version : 'unknown';
   } catch {
     return null;
   }
@@ -111,7 +142,7 @@ let cachedGitVersion: string | null | undefined;
 async function ensureToolsAvailable(): Promise<{ npm: string | null; git: string | null }> {
   if (cachedNpmVersion === undefined) {
     const cli = getBundledNpmCli();
-    if (cli) {
+    if (cli !== null) {
       try {
         const { stdout } = await execFileAsync(process.execPath, [cli, '--version'], {
           windowsHide: true,
@@ -206,15 +237,7 @@ async function promotePluginPackageToRuntimeFolder(pluginsDir: string, packageNa
   return { promoted: true, destination };
 }
 
-export interface ScannedPlugin {
-  name: string;
-  version: string;
-  main: string; // Entry point from package.json
-  metadata: ApiquestMetadata;
-  enabled: boolean; // Resolved from settings
-}
-
-export function registerPluginsHandlers() {
+export function registerPluginsHandlers(): void {
   // Register the plugin:// protocol handler
   const pluginsDir = path.join(app.getPath('userData'), 'plugins');
   registerPluginProtocol(pluginsDir);
@@ -262,28 +285,38 @@ export function registerPluginsHandlers() {
           
           try {
             const content = await readFile(packageJsonPath, 'utf-8');
-            const pkg = JSON.parse(content);
-            
+            const parsed: unknown = JSON.parse(content);
+            if (!isPluginPackageJson(parsed)) {
+              continue;
+            }
+
+            const pkg: PluginPackageJson = parsed;
+            const metadata = pkg.apiquest;
+             
             // Check if it has apiquest metadata and is a desktop plugin
-            if (pkg.apiquest && pkg.apiquest.runtime?.includes('desktop')) {
+            if (metadata !== undefined && isDesktopRuntime(metadata.runtime)) {
               // Check enabled status from settings (default to true if not found)
               const setting = pluginSettings.find(p => p.name === pkg.name);
-              const enabled = setting ? setting.enabled : true;
+              const enabled = setting !== undefined ? setting.enabled : true;
+
+              if (!isNonEmptyString(pkg.name) || !isNonEmptyString(pkg.main)) {
+                continue;
+              }
               
               plugins.push({
                 name: pkg.name,
-                version: pkg.version || '0.0.0',
+                version: pkg.version ?? '0.0.0',
                 main: pkg.main,
-                metadata: pkg.apiquest,
+                metadata,
                 enabled
               });
-              console.log(`[PluginHandler] Found plugin: ${pkg.name} (${pkg.apiquest.type}) - ${enabled ? 'enabled' : 'disabled'}`);
-            } else if (pkg.apiquest) {
-              console.log(`[PluginHandler] Skipping ${pkg.name} - not a desktop plugin (runtime: ${pkg.apiquest.runtime})`);
+              console.log(`[PluginHandler] Found plugin: ${pkg.name} (${metadata.type}) - ${enabled ? 'enabled' : 'disabled'}`);
+            } else if (metadata !== undefined) {
+              console.log(`[PluginHandler] Skipping ${pkg.name ?? '(unknown plugin)'} - not a desktop plugin (runtime: ${String(metadata.runtime)})`);
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             // Skip if package.json doesn't exist or is invalid
-            console.log(`[PluginHandler] Error reading ${entry.name}/package.json:`, err.message || err.code);
+            console.log(`[PluginHandler] Error reading ${entry.name}/package.json:`, getErrorMessage(err));
             continue;
           }
         }
@@ -295,7 +328,7 @@ export function registerPluginsHandlers() {
       // This runs eagerly at scan time so handler registrations are ready
       // before any renderer invoke calls arrive.
       for (const scanned of plugins) {
-        if (scanned.enabled && scanned.metadata.hostBundle) {
+        if (scanned.enabled && isNonEmptyString(scanned.metadata.hostBundle)) {
           const shortName = scanned.name.split('/').pop() ?? scanned.name;
           const bundlePath = join(pluginsDir, shortName, scanned.metadata.hostBundle);
           await loadPluginHostBundle(scanned.name, bundlePath);
@@ -315,7 +348,7 @@ export function registerPluginsHandlers() {
   ipcMain.handle('plugins:install', async (_event, packageName: string): Promise<{ success: boolean; error?: string }> => {
     // Ensure npm is resolvable (bundled or system fallback)
     const tools = await ensureToolsAvailable();
-    if (!tools.npm) {
+    if (tools.npm === null) {
       const msg = 'npm is not available. The bundled npm could not be loaded. Please reinstall ApiQuest or contact support.';
       console.error('[PluginHandler]', msg);
       return { success: false, error: msg };
@@ -332,7 +365,7 @@ export function registerPluginsHandlers() {
         isPackaged: app.isPackaged,
         platform: process.platform,
         arch: process.arch,
-        npmMode: resolvedNpmCli ? 'bundled-cli' : 'system-npm-fallback',
+        npmMode: resolvedNpmCli !== null ? 'bundled-cli' : 'system-npm-fallback',
         npmCliPath: resolvedNpmCli
       });
       
@@ -359,7 +392,7 @@ export function registerPluginsHandlers() {
         stderrLength: stderr?.length ?? 0
       });
       
-      if (stderr && !stderr.includes('npm WARN')) {
+      if (stderr.trim() !== '' && !stderr.includes('npm WARN')) {
         console.error('[PluginHandler] Install stderr:', stderr);
       }
       
@@ -453,25 +486,25 @@ export function registerPluginsHandlers() {
           const settings = await settingsService.getAll();
           const plugins = Array.isArray(settings.plugins) ? settings.plugins : [];
           const existing = plugins.find(p => p.name === packageName);
-          if (existing) {
+          if (existing !== undefined) {
             existing.enabled = true;
           } else {
             plugins.push({ name: packageName, enabled: true });
           }
           await settingsService.update({ plugins });
           console.log('[PluginHandler] Plugin enabled in settings:', packageName);
-        } catch (settingsErr: any) {
-          console.warn('[PluginHandler] Could not update settings after install:', settingsErr.message || settingsErr);
+        } catch (settingsErr: unknown) {
+          console.warn('[PluginHandler] Could not update settings after install:', getErrorMessage(settingsErr));
         }
 
         return { success: true };
-      } catch (verifyErr: any) {
+      } catch (verifyErr: unknown) {
         console.error('[PluginHandler] Plugin verification failed:', verifyErr);
-        return { success: false, error: verifyErr?.message || 'Plugin verification failed after installation.' };
+        return { success: false, error: getErrorMessage(verifyErr) };
       }
-    } catch (err: any) {
-      console.error('[PluginHandler] Failed to install plugin:', err.message || err);
-      return { success: false, error: err?.message || 'Installation failed.' };
+    } catch (err: unknown) {
+      console.error('[PluginHandler] Failed to install plugin:', getErrorMessage(err));
+      return { success: false, error: getErrorMessage(err) };
     }
   });
 
@@ -505,20 +538,20 @@ export function registerPluginsHandlers() {
         const settings = await settingsService.getAll();
         const plugins = Array.isArray(settings.plugins) ? settings.plugins : [];
         const existing = plugins.find(p => p.name === pluginName);
-        if (existing) {
+        if (existing !== undefined) {
           existing.enabled = false;
         } else {
           plugins.push({ name: pluginName, enabled: false });
         }
         await settingsService.update({ plugins });
         console.log('[PluginHandler] Plugin marked as disabled in settings:', pluginName);
-      } catch (settingsErr: any) {
-        console.error('[PluginHandler] Failed to update settings after remove:', settingsErr.message || settingsErr);
+      } catch (settingsErr: unknown) {
+        console.error('[PluginHandler] Failed to update settings after remove:', getErrorMessage(settingsErr));
       }
 
       return true;
-    } catch (err: any) {
-      console.error('[PluginHandler] Failed to remove plugin:', err.message || err);
+    } catch (err: unknown) {
+      console.error('[PluginHandler] Failed to remove plugin:', getErrorMessage(err));
       return false;
     }
   });
@@ -532,10 +565,10 @@ export function registerPluginsHandlers() {
     _event,
     query: string,
     type?: ApiquestMetadata['type'] | 'all'
-  ): Promise<any[]> => {
+  ): Promise<MarketplacePlugin[]> => {
     // Ensure bundled npm is available
     const tools = await ensureToolsAvailable();
-    if (!tools.npm) {
+    if (tools.npm === null) {
       console.warn('[PluginHandler] Marketplace search skipped: npm not available.');
       return [];
     }
@@ -544,16 +577,16 @@ export function registerPluginsHandlers() {
       // Build search query: '@apiquest' finds all packages in the @apiquest scope
       // including newly published ones not yet indexed by the registry REST search API.
       // Using the scope prefix is more precise than 'apiquest' alone.
-      const searchArgs = query
+      const searchArgs = query.trim() !== ''
         ? ['search', `@apiquest ${query}`, '--json']
         : ['search', '@apiquest', '--json'];
       console.log('[PluginHandler] npm search:', searchArgs.join(' '));
 
       const { stdout } = await runNpm(searchArgs, { maxBuffer: 1024 * 1024 * 10 });
 
-      let searchResults: any[];
+      let searchResults: Array<{ name?: string }>;
       try {
-        searchResults = JSON.parse(stdout);
+        searchResults = JSON.parse(stdout) as Array<{ name?: string }>;
       } catch {
         console.error('[PluginHandler] Failed to parse npm search output');
         return [];
@@ -561,15 +594,15 @@ export function registerPluginsHandlers() {
 
       // Filter to @apiquest/plugin-* packages only
       const pluginNames: string[] = searchResults
-        .map((r: any) => r.name as string)
-        .filter((name: string) => typeof name === 'string' && name.startsWith('@apiquest/plugin-'));
+        .map((result) => result.name)
+        .filter((name): name is string => typeof name === 'string' && name.startsWith('@apiquest/plugin-'));
 
       console.log(`[PluginHandler] Found ${pluginNames.length} @apiquest/plugin-* packages: ${pluginNames.join(', ')}`);
 
       if (pluginNames.length === 0) return [];
 
       // Fetch full metadata for each found package using npm view
-      const plugins: any[] = [];
+      const plugins: MarketplacePlugin[] = [];
 
       await Promise.all(pluginNames.map(async (name: string) => {
         try {
@@ -579,24 +612,34 @@ export function registerPluginsHandlers() {
             { maxBuffer: 1024 * 1024 * 2 }
           );
 
-          const pkgData = JSON.parse(viewOut);
+          const parsed: unknown = JSON.parse(viewOut);
+          if (!isMarketplacePackageJson(parsed)) {
+            return;
+          }
+
+          const pkgData: MarketplacePackageJson = parsed;
           const metadata: ApiquestMetadata | undefined = pkgData.apiquest;
 
-          if (!metadata) {
+          if (metadata === undefined) {
             console.log(`[PluginHandler]   ${name}: no apiquest metadata - skipping`);
+            return;
+          }
+
+          if (typeof pkgData.name !== 'string' || typeof pkgData.version !== 'string' || typeof pkgData.description !== 'string') {
+            console.log(`[PluginHandler]   ${name}: incomplete npm metadata - skipping`);
             return;
           }
 
           // Only show desktop runtime plugins
           const runtime = metadata.runtime;
-          const isDesktop = Array.isArray(runtime) ? runtime.includes('desktop') : runtime === 'desktop';
+          const isDesktop = isDesktopRuntime(runtime);
           if (!isDesktop) {
             console.log(`[PluginHandler]   ${name}@${pkgData.version}: runtime=${JSON.stringify(runtime)} - not desktop, skipping`);
             return;
           }
 
           // Filter by type if specified
-          if (type && type !== 'all' && metadata.type !== type) {
+          if (type !== undefined && type !== 'all' && metadata.type !== type) {
             console.log(`[PluginHandler]   ${name}@${pkgData.version}: type=${metadata.type} - filtered out (wanted ${type})`);
             return;
           }
@@ -611,16 +654,16 @@ export function registerPluginsHandlers() {
             repository: typeof pkgData.repository === 'string' ? pkgData.repository : pkgData.repository?.url,
             homepage: pkgData.homepage,
           });
-        } catch (viewErr: any) {
-          console.error(`[PluginHandler]   Failed to fetch metadata for ${name}:`, viewErr.message || viewErr);
+        } catch (viewErr: unknown) {
+          console.error(`[PluginHandler]   Failed to fetch metadata for ${name}:`, getErrorMessage(viewErr));
         }
       }));
 
       plugins.sort((a, b) => a.name.localeCompare(b.name));
       console.log(`[PluginHandler] Marketplace search complete: ${plugins.length} desktop plugins returned`);
       return plugins;
-    } catch (err: any) {
-      console.error('[PluginHandler] Marketplace search failed:', err.message || err);
+    } catch (err: unknown) {
+      console.error('[PluginHandler] Marketplace search failed:', getErrorMessage(err));
       return [];
     }
   });

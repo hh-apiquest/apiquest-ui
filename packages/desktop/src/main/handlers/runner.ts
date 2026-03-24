@@ -2,7 +2,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { runnerService } from '../RunnerService.js';
 import type { RunRequestParams } from '../../types/execution.js';
-import type { RunCollectionParams } from '../../renderer/types/quest.js';
+import type { RunCollectionParams } from '../types/runner.js';
 
 export function registerRunnerHandlers(mainWindow: BrowserWindow | null): void {
   // Set main window for event streaming

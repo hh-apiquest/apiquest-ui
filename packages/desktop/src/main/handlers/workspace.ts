@@ -3,6 +3,8 @@ import { ipcMain, dialog } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import type { Collection } from '@apiquest/types';
+import type { ImportCollectionParams, ImportCollectionResult } from '../types/workspace.js';
 import { workspaceManager } from '../WorkspaceManager.js';
 import { walkDirectory } from '../utils/fileSystem.js';
 import { dispatchPluginHostInvoke, grantPath } from './host.js';
@@ -13,7 +15,7 @@ export const workspaceRegistry = new Map<string, string>();
 // Collection registry: maps collection ID to fileName (path is workspacePath/collections/fileName)
 export const collectionRegistry = new Map<string, string>();
 
-export function registerWorkspaceHandlers() {
+export function registerWorkspaceHandlers(): void {
   // Workspace management
   ipcMain.handle('workspace:selectFolder', async () => {
     const result = await dialog.showOpenDialog({
@@ -28,7 +30,7 @@ export function registerWorkspaceHandlers() {
     
     // Get or create workspace metadata
     let metadata = await workspaceManager.getMetadata(folderPath);
-    if (!metadata) {
+    if (metadata === null) {
       metadata = {
         id: crypto.randomUUID(),
         name: path.basename(folderPath),
@@ -55,27 +57,25 @@ export function registerWorkspaceHandlers() {
         let collectionName = fileName.replace('.apiquest.json', '');
         let collectionVersion = '1.0.0';
         let collectionDescription = '';
-        let collectionData: any = null;
+        let collectionData: Collection | null = null;
         try {
           const content = await fs.readFile(filePath, 'utf-8');
-          collectionData = JSON.parse(content);
-          if (collectionData.info) {
-            collectionId = collectionData.info.id || '';
-            collectionName = collectionData.info.name || collectionName;
-            collectionVersion = collectionData.info.version || '';
-            collectionDescription = collectionData.info.description || '';
-          }
+          collectionData = JSON.parse(content) as Collection;
+          collectionId = collectionData.info.id;
+          collectionName = collectionData.info.name;
+          collectionVersion = collectionData.info.version ?? '';
+          collectionDescription = collectionData.info.description ?? '';
         } catch (readErr) {
           console.error(`Failed to read collection ${fileName}:`, readErr);
         }
 
         // Detect and fix duplicate collection IDs: a copied file will have the same ID as the original.
         // Assign a new UUID to the duplicate and persist it so the file is self-consistent.
-        if (collectionId && seenCollectionIds.has(collectionId)) {
+        if (collectionId !== '' && seenCollectionIds.has(collectionId)) {
           const newId = crypto.randomUUID();
           console.warn(`Duplicate collection ID detected in ${fileName} (id: ${collectionId}). Assigning new ID: ${newId}`);
           collectionId = newId;
-          if (collectionData && collectionData.info) {
+          if (collectionData !== null) {
             collectionData.info.id = newId;
             try {
               await fs.writeFile(filePath, JSON.stringify(collectionData, null, 2), 'utf-8');
@@ -85,12 +85,12 @@ export function registerWorkspaceHandlers() {
           }
         }
 
-        if (collectionId) {
+        if (collectionId !== '') {
           seenCollectionIds.add(collectionId);
         }
         
         // Register collection in runtime registry
-        if (collectionId) {
+        if (collectionId !== '') {
           collectionRegistry.set(collectionId, fileName);
         }
         
@@ -151,7 +151,7 @@ export function registerWorkspaceHandlers() {
   ipcMain.handle('workspace:create', async (_event, name: string, customPath?: string) => {
     let workspacePath: string;
     
-    if (customPath) {
+    if (customPath !== undefined && customPath.trim() !== '') {
       workspacePath = path.join(customPath, name);
     } else {
       const workspacesRoot = workspaceManager.getWorkspacesRootPath();
@@ -166,7 +166,7 @@ export function registerWorkspaceHandlers() {
     return await workspaceManager.getMetadata(workspacePath);
   });
 
-  ipcMain.handle('workspace:updateMetadata', async (_event, workspacePath: string, updates: any) => {
+  ipcMain.handle('workspace:updateMetadata', async (_event, workspacePath: string, updates: Partial<import('../types/workspace.js').WorkspaceMetadata>) => {
     await workspaceManager.updateMetadata(workspacePath, updates);
   });
 
@@ -191,26 +191,13 @@ export function registerWorkspaceHandlers() {
     async (
       _event,
       workspaceId: string,
-      params?: {
-        pluginPackageName: string;
-        format: string;
-        fileExtensions: string[];
-        sourceKind: 'file' | 'directory';
-      }
-    ): Promise<{
-      success: boolean;
-      fileName?: string;
-      collectionId?: string;
-      pluginPackageName?: string;
-      format?: string;
-      warnings?: string[];
-      errors?: string[];
-    } | null> => {
+      params?: ImportCollectionParams
+    ): Promise<ImportCollectionResult | null> => {
       const workspacePath = workspaceRegistry.get(workspaceId);
-      if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+      if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
 
       // Fallback: legacy copy-only mode when no plugin params provided
-      if (!params) {
+      if (params === undefined) {
         const importPath = await dialog.showOpenDialog({
           properties: ['openFile'],
           filters: [
@@ -218,7 +205,7 @@ export function registerWorkspaceHandlers() {
             { name: 'All Files', extensions: ['*'] }
           ]
         });
-        if (importPath.canceled || !importPath.filePaths[0]) return null;
+        if (importPath.canceled || importPath.filePaths[0] === undefined) return null;
         const sourceFile = importPath.filePaths[0];
         const collectionsDir = path.join(workspacePath, 'collections');
         await fs.mkdir(collectionsDir, { recursive: true });
@@ -247,6 +234,7 @@ export function registerWorkspaceHandlers() {
       if (dialogResult.canceled || dialogResult.filePaths.length === 0) return null;
 
       const sourcePath = dialogResult.filePaths[0];
+      if (sourcePath === undefined) return null;
 
       // Step 2: Grant the path to the plugin (same as showOpenDialog via IPC would do)
       grantPath(pluginPackageName, sourcePath);
@@ -282,19 +270,19 @@ export function registerWorkspaceHandlers() {
       };
 
       // Step 5: Normalize the collection
-      if (!collection?.info) {
+      if (typeof collection !== 'object' || collection === null || typeof collection.info !== 'object' || collection.info === null) {
         return { success: false, errors: ['Plugin returned an invalid collection (no info field)'] };
       }
 
-      const collectionId = collection.info.id || crypto.randomUUID();
+      const collectionId = collection.info.id ?? crypto.randomUUID();
       collection.info.id = collectionId;
 
-      const rawName = collection.info.name || path.basename(sourcePath, path.extname(sourcePath));
+      const rawName = collection.info.name ?? path.basename(sourcePath, path.extname(sourcePath));
       const sanitizedName = rawName.trim().replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
       const fileName = `${sanitizedName}.apiquest.json`;
 
       collection.info.name = rawName;
-      if (!collection.protocol) collection.protocol = 'http';
+      if (collection.protocol === undefined || collection.protocol.trim() === '') collection.protocol = 'http';
       if (!Array.isArray(collection.variables)) collection.variables = [];
       if (!Array.isArray(collection.items)) collection.items = [];
 
@@ -322,10 +310,10 @@ export function registerWorkspaceHandlers() {
 
   ipcMain.handle('workspace:exportCollection', async (_event, workspaceId: string, collectionId: string) => {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const fileName = collectionRegistry.get(collectionId);
-    if (!fileName) throw new Error(`Collection not found: ${collectionId}`);
+    if (fileName === undefined) throw new Error(`Collection not found: ${collectionId}`);
     
     const collectionPath = path.join(workspacePath, fileName);
     const result = await dialog.showSaveDialog({
@@ -336,7 +324,7 @@ export function registerWorkspaceHandlers() {
       ]
     });
     
-    if (result.canceled || !result.filePath) {
+    if (result.canceled || result.filePath === undefined) {
       return null;
     }
     

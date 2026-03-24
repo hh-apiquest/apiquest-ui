@@ -3,13 +3,20 @@ import { app } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import type { WorkspaceMetadata, WorkspaceWithMetadata } from './types/workspace.js';
 
-export type WorkspaceMetadata = {
-  id: string;
-  name: string;
-  description?: string;
-  createdAt: string;
-};
+function isWorkspaceMetadata(value: unknown): value is WorkspaceMetadata {
+  return typeof value === 'object'
+    && value !== null
+    && typeof (value as { id?: unknown }).id === 'string'
+    && typeof (value as { name?: unknown }).name === 'string'
+    && typeof (value as { createdAt?: unknown }).createdAt === 'string'
+    && (
+      !Object.prototype.hasOwnProperty.call(value, 'description')
+      || typeof (value as { description?: unknown }).description === 'string'
+      || typeof (value as { description?: unknown }).description === 'undefined'
+    );
+}
 
 export class WorkspaceManager {
   private appDataPath: string;
@@ -161,7 +168,8 @@ This is an ApiQuest workspace.
     try {
       const metadataPath = path.join(workspacePath, 'workspace.json');
       const content = await fs.readFile(metadataPath, 'utf-8');
-      return JSON.parse(content);
+      const parsed: unknown = JSON.parse(content);
+      return isWorkspaceMetadata(parsed) ? parsed : null;
     } catch {
       // No metadata file or invalid JSON
       return null;
@@ -173,7 +181,7 @@ This is an ApiQuest workspace.
    */
   async updateMetadata(workspacePath: string, updates: Partial<WorkspaceMetadata>): Promise<void> {
     const existing = await this.getMetadata(workspacePath);
-    if (!existing) {
+    if (existing === null) {
       throw new Error('Workspace metadata not found');
     }
 
@@ -185,7 +193,7 @@ This is an ApiQuest workspace.
   /**
    * List all workspaces with their metadata
    */
-  async listWorkspacesWithMetadata(): Promise<Array<{ path: string; metadata: WorkspaceMetadata | null }>> {
+  async listWorkspacesWithMetadata(): Promise<WorkspaceWithMetadata[]> {
     const workspacePaths = await this.listWorkspaces();
     const results = [];
 

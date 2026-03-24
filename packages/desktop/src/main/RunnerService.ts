@@ -1,12 +1,13 @@
 import { CollectionRunner } from '@apiquest/fracture';
 import type { Request, Collection, RunOptions, CollectionItem, Folder } from '@apiquest/types';
 import type { ExecutionInfo, ExecutionEvent, RunRequestParams } from '../types/execution.js';
-import type { RunCollectionParams, RunnerExecutionState } from '../renderer/types/quest.js';
+import type { RunCollectionParams, RunnerExecutionState } from './types/runner.js';
 import path from 'path';
 import { app, BrowserWindow } from 'electron';
 import { promises as fs } from 'fs';
 import { workspaceRegistry, collectionRegistry } from './handlers/workspace.js';
 import { secretVariableService } from './SecretVariableService.js';
+import { isObjectRecord, isVariableRow, type VariableRecord } from './types/variables.js';
 import { maskSecretRecord, maskVariablesForLog } from './utils/mask.js';
 
 class RunnerService {
@@ -31,7 +32,7 @@ class RunnerService {
    * Stream execution event to renderer
    */
   private streamEvent(event: ExecutionEvent): void {
-    if (this.mainWindow) {
+    if (this.mainWindow !== null) {
       this.mainWindow.webContents.send('execution:event', event);
     }
   }
@@ -46,24 +47,26 @@ class RunnerService {
 
   private async loadCollection(workspaceId: string, collectionId: string): Promise<Collection> {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     const fileName = collectionRegistry.get(collectionId);
-    if (!fileName) throw new Error(`Collection not found: ${collectionId}`);
+    if (fileName === undefined) throw new Error(`Collection not found: ${collectionId}`);
     
     const collectionPath = path.join(workspacePath, 'collections', fileName);
     const content = await fs.readFile(collectionPath, 'utf-8');
     const collection = JSON.parse(content) as Collection;
+    const collectionWithVariables = collection as Collection & { variables?: VariableRecord };
+    const parsedCollection = JSON.parse(content) as Collection & { variables?: VariableRecord };
 
     const collectionSecrets = await secretVariableService.getCollectionSecrets(workspaceId, collectionId);
-    (collection as any).variables = secretVariableService.hydrateVariables((collection as any).variables, collectionSecrets);
+    collectionWithVariables.variables = secretVariableService.hydrateVariables(collectionWithVariables.variables, collectionSecrets);
 
     console.log('[RunnerService] loadCollection hydrated variables', {
       workspaceId,
       collectionId,
-      fileVariables: maskVariablesForLog((JSON.parse(content) as any)?.variables),
+      fileVariables: maskVariablesForLog(parsedCollection.variables),
       settingsSecrets: maskSecretRecord(collectionSecrets),
-      hydratedVariables: maskVariablesForLog((collection as any).variables)
+      hydratedVariables: maskVariablesForLog(collectionWithVariables.variables)
     });
 
     return collection;
@@ -71,20 +74,20 @@ class RunnerService {
 
   private async loadEnvironment(workspaceId: string, environmentId: string): Promise<Record<string, string>> {
     const workspacePath = workspaceRegistry.get(workspaceId);
-    if (!workspacePath) throw new Error(`Workspace not found: ${workspaceId}`);
+    if (workspacePath === undefined) throw new Error(`Workspace not found: ${workspaceId}`);
     
     // Add .json extension if not present
     const environmentPath = path.join(workspacePath, 'environments', `${environmentId}.json`);
     try {
       const content = await fs.readFile(environmentPath, 'utf-8');
-      const environment = JSON.parse(content);
+      const environment = JSON.parse(content) as { variables?: unknown };
       
       // Convert variables array to object for runner
       const variables: Record<string, string> = {};
-      if (environment.variables && Array.isArray(environment.variables)) {
+      if (Array.isArray(environment.variables)) {
         for (const variable of environment.variables) {
-          if (variable.key && variable.enabled !== false) {
-            variables[variable.key] = variable.value || '';
+          if (isVariableRow(variable) && variable.key !== undefined && variable.key !== '' && variable.enabled !== false) {
+            variables[variable.key] = typeof variable.value === 'string' ? variable.value : '';
           }
         }
       }
@@ -102,22 +105,22 @@ class RunnerService {
     
     try {
       const content = await fs.readFile(globalVarsPath, 'utf-8');
-      const globalVars = JSON.parse(content);
+      const globalVars = JSON.parse(content) as Record<string, unknown>;
       
       // Convert variables object to simple key-value pairs for runner
       const variables: Record<string, string> = {};
       for (const [key, variable] of Object.entries(globalVars)) {
-        if (typeof variable === 'object' && variable !== null) {
-          const varObj = variable as any;
-          if (varObj.enabled !== false) {
-            variables[key] = varObj.value || '';
+        if (isObjectRecord(variable)) {
+          const enabled = variable.enabled;
+          if (enabled !== false) {
+            variables[key] = typeof variable.value === 'string' ? variable.value : '';
           }
         }
       }
       
       return variables;
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
+    } catch (error: unknown) {
+      if (isObjectRecord(error) && error.code === 'ENOENT') {
         return {};
       }
       console.warn('[RunnerService] Failed to load global variables:', error);
@@ -136,7 +139,7 @@ class RunnerService {
       
       if (item.type === 'folder') {
         const found = this.findRequestPath(item.items, requestId, [...currentPath, item]);
-        if (found) return found;
+        if (found !== null) return found;
       }
     }
     return null;
@@ -148,7 +151,7 @@ class RunnerService {
   private buildEphemeralCollection(collection: Collection, modifiedRequest: Request): Collection {
     // Find request path in original collection
     const path = this.findRequestPath(collection.items, modifiedRequest.id);
-    if (!path) {
+    if (path === null) {
       throw new Error(`Request ${modifiedRequest.id} not found in collection ${collection.info.id}`);
     }
     
@@ -156,7 +159,7 @@ class RunnerService {
     let items: CollectionItem[] = [];
     
     // Rebuild tree from path (excluding the request itself, we'll add modified version)
-    const folders = path.filter(item => item.type === 'folder') as Folder[];
+    const folders = path.filter((item): item is Folder => item.type === 'folder');
     
     if (folders.length > 0) {
       // Build nested folder structure
@@ -189,31 +192,31 @@ class RunnerService {
       items = [modifiedRequest];
     }
     
-    return {
-      ...(collection.$schema && { $schema: collection.$schema }),
-      info: {
-        id: `${collection.info.id}-ephemeral`,
-        name: `${collection.info.name} (Single Request)`,
-        version: collection.info.version,
-        description: collection.info.description
-      },
-      protocol: collection.protocol,
-      ...(collection.auth && { auth: collection.auth }),
-      ...(collection.variables && { variables: collection.variables }),
-      ...(collection.collectionPreScript?.trim() && { collectionPreScript: collection.collectionPreScript }),
-      ...(collection.collectionPostScript?.trim() && { collectionPostScript: collection.collectionPostScript }),
-      ...(collection.preRequestScript?.trim() && { preRequestScript: collection.preRequestScript }),
-      ...(collection.postRequestScript?.trim() && { postRequestScript: collection.postRequestScript }),
-      ...(collection.testData && { testData: collection.testData }),
-      ...(collection.options && { options: collection.options }),
-      items
-    };
+      return {
+        ...(collection.$schema !== undefined ? { $schema: collection.$schema } : {}),
+        info: {
+          id: `${collection.info.id}-ephemeral`,
+          name: `${collection.info.name} (Single Request)`,
+          version: collection.info.version,
+          description: collection.info.description
+        },
+        protocol: collection.protocol,
+        ...(collection.auth !== undefined ? { auth: collection.auth } : {}),
+        ...(collection.variables !== undefined ? { variables: collection.variables } : {}),
+        ...(typeof collection.collectionPreScript === 'string' && collection.collectionPreScript.trim() !== '' ? { collectionPreScript: collection.collectionPreScript } : {}),
+        ...(typeof collection.collectionPostScript === 'string' && collection.collectionPostScript.trim() !== '' ? { collectionPostScript: collection.collectionPostScript } : {}),
+        ...(typeof collection.preRequestScript === 'string' && collection.preRequestScript.trim() !== '' ? { preRequestScript: collection.preRequestScript } : {}),
+        ...(typeof collection.postRequestScript === 'string' && collection.postRequestScript.trim() !== '' ? { postRequestScript: collection.postRequestScript } : {}),
+        ...(collection.testData !== undefined ? { testData: collection.testData } : {}),
+        ...(collection.options !== undefined ? { options: collection.options } : {}),
+        items
+      };
   }
 
   /**
    * Execute a single request in collection context using ephemeral collection
    */
-  async executeRequest(params: RunRequestParams) {
+  async executeRequest(params: RunRequestParams): Promise<unknown> {
     const { executionId, protocol, request, variables, workspaceId, collectionId } = params;
 
     const collection = await this.loadCollection(workspaceId, collectionId);
@@ -223,7 +226,7 @@ class RunnerService {
       collectionPreScript: collection.collectionPreScript,
       collectionPreScriptType: typeof collection.collectionPreScript,
       collectionPreScriptLength: collection.collectionPreScript?.length,
-      hasCollectionPreScript: !!collection.collectionPreScript
+        hasCollectionPreScript: typeof collection.collectionPreScript === 'string' && collection.collectionPreScript.trim() !== ''
     });
     
     // Create fresh runner for this execution (ensures plugins are freshly loaded after devinstaller)
@@ -243,7 +246,7 @@ class RunnerService {
     
     // Subscribe to ALL runner events (standard + custom) and stream to renderer
     const unsubscribe = runner.onAll((eventType, data) => {
-      const enrichedData = data && typeof data === 'object' 
+      const enrichedData = data !== null && typeof data === 'object' 
         ? { ...data, protocol } 
         : { data, protocol };
       
@@ -263,12 +266,12 @@ class RunnerService {
         collectionPreScript: ephemeralCollection.collectionPreScript,
         collectionPreScriptType: typeof ephemeralCollection.collectionPreScript,
         collectionPreScriptLength: ephemeralCollection.collectionPreScript?.length,
-        hasCollectionPreScript: !!ephemeralCollection.collectionPreScript,
+        hasCollectionPreScript: typeof ephemeralCollection.collectionPreScript === 'string' && ephemeralCollection.collectionPreScript.trim() !== '',
         allKeys: Object.keys(ephemeralCollection)
       });
       
       const runResult = await runner.run(ephemeralCollection, {
-        environment: variables?.environment ? {
+        environment: variables?.environment !== undefined ? {
           name: 'Active Environment',
           variables: variables.environment
         } : undefined,
@@ -278,33 +281,33 @@ class RunnerService {
 
       console.log('[RunnerService] executeRequest run options snapshot', {
         executionId,
-        collectionVariables: maskVariablesForLog((ephemeralCollection as any).variables),
+        collectionVariables: maskVariablesForLog(ephemeralCollection.variables as VariableRecord | undefined),
         environmentVariables: maskVariablesForLog(variables?.environment),
         globalVariables: maskVariablesForLog(variables?.global)
       });
 
       // Mark execution as completed
       const execution = this.activeExecutions.get(executionId);
-      if (execution) {
+      if (execution !== undefined) {
         execution.status = 'completed';
       }
 
       // Surface validation errors before trying to read the response
-      if (runResult.requestResults.length === 0 && runResult.validationErrors && runResult.validationErrors.length > 0) {
-        const messages = runResult.validationErrors.map(e => e.message).join('; ');
+      if (runResult.requestResults.length === 0 && runResult.validationErrors !== undefined && runResult.validationErrors.length > 0) {
+        const messages = runResult.validationErrors.map((validationError) => validationError.message).join('; ');
         throw new Error(`Validation failed: ${messages}`);
       }
 
       const requestResult = runResult.requestResults[0];
       
       console.log('[RunnerService] Request completed:', {
-        hasResult: !!requestResult,
-        hasResponse: !!requestResult?.response,
-        responseKeys: requestResult?.response ? Object.keys(requestResult.response) : [],
+        hasResult: requestResult !== undefined,
+        hasResponse: requestResult?.response !== undefined,
+        responseKeys: requestResult?.response !== undefined ? Object.keys(requestResult.response) : [],
         response: requestResult?.response
       });
 
-      if (!requestResult) {
+      if (requestResult === undefined) {
         throw new Error('Request execution produced no result — the request may have been filtered out or skipped.');
       }
       
@@ -317,7 +320,7 @@ class RunnerService {
     } catch (error) {
       // Mark execution as failed
       const execution = this.activeExecutions.get(executionId);
-      if (execution) {
+      if (execution !== undefined) {
         execution.status = abortController.signal.aborted ? 'cancelled' : 'failed';
       }
       
@@ -368,9 +371,9 @@ class RunnerService {
     const collection = await this.loadCollection(workspaceId, collectionId);
     
     // Filter collection to only include selected requests
-    const filteredItems = selectedRequests.length > 0 
-      ? this.filterCollectionItems(collection.items, selectedRequests)
-      : collection.items;
+      const filteredItems = selectedRequests.length > 0 
+        ? this.filterCollectionItems(collection.items, selectedRequests)
+        : collection.items;
     
     const filteredCollection: Collection = {
       ...collection,
@@ -432,25 +435,25 @@ class RunnerService {
     
     // Load variables
     const globalVariables = await this.loadGlobalVariables();
-    const environmentVariables = config.environmentId 
-      ? await this.loadEnvironment(workspaceId, config.environmentId)
-      : undefined;
+      const environmentVariables = config.environmentId !== undefined && config.environmentId.trim() !== ''
+        ? await this.loadEnvironment(workspaceId, config.environmentId)
+        : undefined;
     
     // Build run options from config
     const runOptions: RunOptions = {
       // Variables
       globalVariables,
-      ...(environmentVariables && {
-        environment: {
-          name: config.environmentId || 'Active Environment',
-          variables: environmentVariables
-        }
-      }),
+        ...(environmentVariables !== undefined ? {
+          environment: {
+            name: config.environmentId ?? 'Active Environment',
+            variables: environmentVariables
+          }
+        } : {}),
       
       // Iterations and test data
       iterations: config.iterations,
-      ...(config.dataFile && { dataFile: config.dataFile }),  // dataFile is a path string
-      ...(config.disableCollectionTestData && { ignoreCollectionTestData: true }),
+        ...(typeof config.dataFile === 'string' && config.dataFile.trim() !== '' ? { dataFile: config.dataFile } : {}),  // dataFile is a path string
+        ...(config.disableCollectionTestData === true ? { ignoreCollectionTestData: true } : {}),
       
       // Execution options - include parallel execution settings
       ...(config.delay !== undefined || config.bail !== undefined || config.concurrency !== undefined ? {
@@ -462,9 +465,9 @@ class RunnerService {
       } : {}),
       
       // Timeout
-      ...(config.timeout ? {
-        timeout: { request: config.timeout }
-      } : {}),
+        ...(config.timeout !== undefined ? {
+          timeout: { request: config.timeout }
+        } : {}),
       
       // SSL options
       ...(config.insecure !== undefined ? {
@@ -474,20 +477,20 @@ class RunnerService {
       } : {}),
       
       // Abort signal for external cancellation
-      signal: abortController?.signal,
+        signal: abortController.signal,
       
       // Note: saveResponses and persistVariables are handled post-execution
       // Note: strictMode is read from collection.options.strictMode automatically by runner
     };
     
     // Execute collection asynchronously
-    (async () => {
+    void (async () => {
       try {
         const result = await runner.run(filteredCollection, runOptions);
         
         // Update run state
         const state = this.activeCollectionRuns.get(runId);
-        if (state) {
+        if (state !== undefined) {
           state.status = 'completed';
           state.completedAt = new Date();
           state.results = result;
@@ -495,24 +498,24 @@ class RunnerService {
         
         // Update execution info
         const execution = this.activeExecutions.get(runId);
-        if (execution) {
+        if (execution !== undefined) {
           execution.status = 'completed';
         }
         
         console.log(`[RunnerService] Collection run ${runId} completed`);
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(`[RunnerService] Collection run ${runId} failed:`, error);
         
         // Update run state
         const state = this.activeCollectionRuns.get(runId);
-        if (state) {
+        if (state !== undefined) {
           state.status = 'error';
           state.completedAt = new Date();
         }
         
         // Update execution info
         const execution = this.activeExecutions.get(runId);
-        if (execution) {
+        if (execution !== undefined) {
           execution.status = 'failed';
         }
         
@@ -523,7 +526,7 @@ class RunnerService {
           timestamp: Date.now(),
           data: {
             runId,
-            error: error.message || String(error)
+            error: error instanceof Error ? error.message : String(error)
           }
         });
       } finally {
@@ -543,7 +546,7 @@ class RunnerService {
     const execution = this.activeExecutions.get(runId);
     const state = this.activeCollectionRuns.get(runId);
     
-    if (!execution) {
+    if (execution === undefined) {
       console.warn(`[RunnerService] Cannot stop execution ${runId}: not found`);
       return { success: false };
     }
@@ -551,13 +554,13 @@ class RunnerService {
     console.log(`[RunnerService] Stopping execution ${runId}`);
     
     // Abort the execution
-    if (execution.abortController) {
+    if (execution.abortController !== undefined) {
       execution.abortController.abort('User cancelled execution');
     }
 
     execution.status = 'cancelled';
 
-    if (!state) {
+    if (state === undefined) {
       this.streamEvent({
         type: 'runnerStopped',
         executionId: runId,
@@ -600,7 +603,7 @@ class RunnerService {
    */
   async getRunStatus(runId: string): Promise<RunnerExecutionState | null> {
     const state = this.activeCollectionRuns.get(runId);
-    return state || null;
+    return state ?? null;
   }
 }
 

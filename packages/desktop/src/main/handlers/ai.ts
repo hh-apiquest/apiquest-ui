@@ -1,38 +1,10 @@
 import { ipcMain } from 'electron';
+import type {
+  AICompletionRequest,
+  AICompletionResponse,
+  OpenAICompatibleResponse,
+} from '../types/ai.js';
 import { settingsService } from '../SettingsService.js';
-
-type AICompletionRequest = {
-  prompt: string;
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-  metadata?: Record<string, unknown>;
-};
-
-type AICompletionResponse = {
-  text: string;
-  model?: string;
-  usage?: {
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-};
-
-type OpenAICompatibleResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-    text?: string;
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-  model?: string;
-};
 
 function ensureTrailingNoSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -52,12 +24,14 @@ function resolveAiEndpoint(baseUrl: string): string {
 }
 
 function isConfigured(settings: Awaited<ReturnType<typeof settingsService.getAll>>): boolean {
-  return Boolean(
-    settings.ai?.enabled === true &&
-    settings.ai?.baseUrl?.trim() &&
-    settings.ai?.apiKey?.trim() &&
-    settings.ai?.model?.trim()
-  );
+  const aiSettings = settings.ai;
+  return aiSettings?.enabled === true
+    && typeof aiSettings.baseUrl === 'string'
+    && aiSettings.baseUrl.trim() !== ''
+    && typeof aiSettings.apiKey === 'string'
+    && aiSettings.apiKey.trim() !== ''
+    && typeof aiSettings.model === 'string'
+    && aiSettings.model.trim() !== '';
 }
 
 function toCompletionResponse(payload: OpenAICompatibleResponse): AICompletionResponse {
@@ -75,7 +49,7 @@ function toCompletionResponse(payload: OpenAICompatibleResponse): AICompletionRe
   };
 }
 
-export function registerAiHandlers() {
+export function registerAiHandlers(): void {
   ipcMain.handle('ai:isConfigured', async (): Promise<boolean> => {
     const settings = await settingsService.getAll();
     return isConfigured(settings);
@@ -107,7 +81,7 @@ export function registerAiHandlers() {
         body: JSON.stringify({
           model: aiSettings.model,
           messages: [
-            ...(request.systemPrompt
+            ...((typeof request.systemPrompt === 'string' && request.systemPrompt.trim() !== '')
               ? [{ role: 'system', content: request.systemPrompt }]
               : []),
             { role: 'user', content: request.prompt }
