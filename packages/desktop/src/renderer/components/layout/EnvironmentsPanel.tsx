@@ -15,7 +15,7 @@ import {
   GlobeAltIcon
 } from '@heroicons/react/24/outline';
 
-export function EnvironmentsPanel() {
+export function EnvironmentsPanel(): JSX.Element | null {
   const { 
     workspace, 
     activeEnvironment,
@@ -41,26 +41,24 @@ export function EnvironmentsPanel() {
   const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
   const [rightClickEnv, setRightClickEnv] = useState<EnvironmentMetadata | null>(null);
 
-  if (!workspace) return null;
+  if (workspace === null) return null;
 
   const filteredEnvironments = workspace.environments.filter(env => 
-    !searchQuery || env.name.toLowerCase().includes(searchQuery.toLowerCase())
+    searchQuery === '' || env.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handlePanelClick = (e: React.MouseEvent) => {
+  const handlePanelClick = (e: React.MouseEvent): void => {
     // Submit active rename when clicking on empty space
-    if (activeRenameId && e.target === e.currentTarget) {
+    if (activeRenameId !== null && e.target === e.currentTarget) {
       setActiveRenameId(null);
       setInlineRenameValue('');
     }
   };
 
-  const handleEnvClick = async (env: EnvironmentMetadata) => {
+  const handleEnvClick = async (env: EnvironmentMetadata): Promise<void> => {
     try {
       const data = await loadEnvironment(env.fileName);
-      if (!data.variables) {
-        data.variables = {};
-      }
+      data.variables ??= {};
       setEnvData(data);
       setEditingEnv(env);
     } catch (error) {
@@ -69,8 +67,8 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleSaveEnvVars = async (updatedVariables: Record<string, VariableValue>) => {
-    if (!editingEnv || !envData) return;
+  const handleSaveEnvVars = async (updatedVariables: Record<string, VariableValue>): Promise<void> => {
+    if (editingEnv === null || envData === null) return;
     
     try {
       const updatedEnv = { ...envData, variables: updatedVariables };
@@ -83,7 +81,7 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleCreateEnvironment = async (name: string) => {
+  const handleCreateEnvironment = async (name: string): Promise<void> => {
     try {
       await createEnvironment(name);
     } catch (error) {
@@ -92,8 +90,8 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleRenameEnvironment = async (newName: string) => {
-    if (!renamingEnv) return;
+  const handleRenameEnvironment = async (newName: string): Promise<void> => {
+    if (renamingEnv === null) return;
     
     try {
       await renameEnvironment(renamingEnv, newName);
@@ -104,8 +102,8 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleDuplicateEnvironment = async (newName: string) => {
-    if (!duplicatingEnv) return;
+  const handleDuplicateEnvironment = async (newName: string): Promise<void> => {
+    if (duplicatingEnv === null) return;
     
     try {
       await duplicateEnvironment(duplicatingEnv, newName);
@@ -116,8 +114,8 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleConfirmDelete = async () => {
-    if (!deletingEnv) return;
+  const handleConfirmDelete = async (): Promise<void> => {
+    if (deletingEnv === null) return;
     
     try {
       await deleteEnvironment(deletingEnv);
@@ -128,18 +126,18 @@ export function EnvironmentsPanel() {
     }
   };
 
-  const handleSetActive = (env: EnvironmentMetadata) => {
+  const handleSetActive = (env: EnvironmentMetadata): void => {
     setActiveEnvironment(activeEnvironment?.id === env.id ? null : env);
   };
 
-  const handleStartInlineRename = (env: EnvironmentMetadata) => {
+  const handleStartInlineRename = (env: EnvironmentMetadata): void => {
     // Cancel any existing rename before starting a new one
     setActiveRenameId(env.id);
     setInlineRenameValue(env.name);
   };
 
-  const handleInlineRenameSubmit = async (env: EnvironmentMetadata) => {
-    if (inlineRenameValue.trim() && inlineRenameValue !== env.name) {
+  const handleInlineRenameSubmit = async (env: EnvironmentMetadata): Promise<void> => {
+    if (inlineRenameValue.trim() !== '' && inlineRenameValue !== env.name) {
       try {
         await renameEnvironment(env, inlineRenameValue.trim());
       } catch (error) {
@@ -151,16 +149,16 @@ export function EnvironmentsPanel() {
     setInlineRenameValue('');
   };
 
-  const handleInlineRenameCancel = () => {
+  const handleInlineRenameCancel = (): void => {
     setActiveRenameId(null);
     setInlineRenameValue('');
   };
 
-  const handleMenuAction = async (action: MenuAction, env: EnvironmentMetadata) => {
+  const handleMenuAction = async (action: MenuAction, env: EnvironmentMetadata): Promise<void> => {
     switch (action) {
       case 'edit-variables':
-        handleEnvClick(env);
-        break;
+          void handleEnvClick(env);
+          break;
       case 'set-active':
         handleSetActive(env);
         break;
@@ -202,11 +200,11 @@ export function EnvironmentsPanel() {
         {filteredEnvironments.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center" style={{ height: '128px' }}>
             <div className="text-xs mb-2" style={{ color: 'var(--gray-9)' }}>
-              {searchQuery ? 'No environments match' : 'No environments'}
+              {searchQuery !== '' ? 'No environments match' : 'No environments'}
             </div>
-            {!searchQuery && (
-              <div className="text-xxs" style={{ color: 'var(--gray-9)' }}>Click + to create one</div>
-            )}
+              {searchQuery === '' && (
+                <div className="text-xxs" style={{ color: 'var(--gray-9)' }}>Click + to create one</div>
+              )}
           </div>
         ) : (
           <div className="flex flex-col" style={{ gap: '2px' }}>
@@ -218,14 +216,14 @@ export function EnvironmentsPanel() {
                 inlineRenameValue={inlineRenameValue}
                 setInlineRenameValue={setInlineRenameValue}
                 activeEnvironment={activeEnvironment}
-                handleEnvClick={handleEnvClick}
+                handleEnvClick={(env) => { void handleEnvClick(env); }}
                 handleStartInlineRename={handleStartInlineRename}
-                handleInlineRenameSubmit={handleInlineRenameSubmit}
+                handleInlineRenameSubmit={(env) => { void handleInlineRenameSubmit(env); }}
                 handleInlineRenameCancel={handleInlineRenameCancel}
                 setRightClickPosition={setRightClickPosition}
                 setRightClickEnv={setRightClickEnv}
                 setRightClickMenuOpen={setRightClickMenuOpen}
-                handleMenuAction={handleMenuAction}
+                handleMenuAction={(action, env) => { void handleMenuAction(action, env); }}
               />
             ))}
           </div>
@@ -238,33 +236,33 @@ export function EnvironmentsPanel() {
         onOpenChange={setShowNewEnv}
         title="New Environment"
         placeholder="Environment name (e.g., Development, Production)"
-        onSubmit={handleCreateEnvironment}
+        onSubmit={(name) => { void handleCreateEnvironment(name); }}
       />
 
       {/* Rename Environment Dialog */}
       <InputDialog
-        open={!!renamingEnv}
+        open={renamingEnv !== null}
         onOpenChange={(open) => !open && setRenamingEnv(null)}
         title="Rename Environment"
         placeholder="New environment name"
         defaultValue={renamingEnv?.name}
-        onSubmit={handleRenameEnvironment}
+        onSubmit={(name) => { void handleRenameEnvironment(name); }}
       />
 
       {/* Duplicate Environment Dialog */}
       <InputDialog
-        open={!!duplicatingEnv}
+        open={duplicatingEnv !== null}
         onOpenChange={(open) => !open && setDuplicatingEnv(null)}
         title="Duplicate Environment"
         placeholder="New environment name"
-        defaultValue={duplicatingEnv ? `${duplicatingEnv.name} Copy` : ''}
-        onSubmit={handleDuplicateEnvironment}
+        defaultValue={duplicatingEnv !== null ? `${duplicatingEnv.name} Copy` : ''}
+        onSubmit={(name) => { void handleDuplicateEnvironment(name); }}
       />
 
       {/* Environment Variables Editor Dialog */}
-      {editingEnv && envData && (
+      {editingEnv !== null && envData !== null && (
         <VariableEditorDialog
-          open={!!editingEnv}
+          open={true}
           onOpenChange={(open) => {
             if (!open) {
               setEditingEnv(null);
@@ -273,25 +271,25 @@ export function EnvironmentsPanel() {
           }}
           title={`${editingEnv.name} Variables`}
           variables={envData.variables}
-          onSave={handleSaveEnvVars}
+          onSave={(vars) => { void handleSaveEnvVars(vars); }}
           showEnabled={true}
         />
       )}
 
       {/* Delete Confirmation Dialog */}
       <ConfirmDialog
-        open={!!deletingEnv}
+        open={deletingEnv !== null}
         onOpenChange={(open) => !open && setDeletingEnv(null)}
         title="Delete Environment"
         description={`Are you sure you want to delete "${deletingEnv?.name}"? This action cannot be undone.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={handleConfirmDelete}
+        onConfirm={() => { void handleConfirmDelete(); }}
       />
 
       {/* Right-click Context Menu */}
-      {rightClickPosition && rightClickEnv && (
+      {rightClickPosition !== null && rightClickEnv !== null && (
         <UnifiedContextMenu
           type="environment"
           item={rightClickEnv}
@@ -299,7 +297,7 @@ export function EnvironmentsPanel() {
           onOpenChange={setRightClickMenuOpen}
           position={rightClickPosition}
           additionalInfo={{ isActive: activeEnvironment?.id === rightClickEnv.id }}
-          onAction={(action) => handleMenuAction(action, rightClickEnv)}
+          onAction={(action) => { void handleMenuAction(action, rightClickEnv); }}
         />
       )}
     </div>
@@ -334,17 +332,17 @@ function EnvironmentItem({
   setRightClickEnv: (env: EnvironmentMetadata | null) => void;
   setRightClickMenuOpen: (open: boolean) => void;
   handleMenuAction: (action: MenuAction, env: EnvironmentMetadata) => void;
-}) {
+}): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const focusTimeRef = useRef<number>(0);
 
   // Explicitly focus input when rename becomes active
   useEffect(() => {
-    if (activeRenameId === env.id && inputRef.current) {
+    if (activeRenameId === env.id && inputRef.current !== null) {
       console.log('[Environment] Starting rename for:', env.id);
       // Use setTimeout to ensure input is fully mounted in DOM
       setTimeout(() => {
-        if (inputRef.current) {
+        if (inputRef.current !== null) {
           focusTimeRef.current = Date.now();
           inputRef.current.focus();
           inputRef.current.select();
@@ -354,7 +352,7 @@ function EnvironmentItem({
     }
   }, [activeRenameId, env.id]);
 
-  const handleBlur = () => {
+  const handleBlur = (): void => {
     const timeSinceFocus = Date.now() - focusTimeRef.current;
     console.log('[Environment] Blur fired, time since focus:', timeSinceFocus + 'ms');
     
@@ -363,7 +361,7 @@ function EnvironmentItem({
       console.log('[Environment] Ignoring premature blur, refocusing input');
       // Refocus the input since focus was stolen
       setTimeout(() => {
-        if (inputRef.current) {
+        if (inputRef.current !== null) {
           inputRef.current.focus();
           inputRef.current.select();
         }

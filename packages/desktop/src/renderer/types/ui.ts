@@ -10,7 +10,7 @@ export interface OpenTab {
   collectionId?: string;
   requestId?: string;
   isDirty: boolean;  // Has unsaved changes
-  data?: any;        // Tab-specific data
+  data?: unknown;        // Tab-specific data
 }
 
 /**
@@ -69,5 +69,5 @@ export interface WorkspaceUIState {
  */
 export interface ModalState {
   type: 'new-request' | 'new-collection' | 'settings' | 'plugin-manager' | null;
-  data?: any;
+  data?: unknown;
 }

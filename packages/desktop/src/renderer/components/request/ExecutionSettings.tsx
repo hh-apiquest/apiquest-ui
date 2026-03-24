@@ -13,7 +13,7 @@ interface ExecutionSettingsProps {
 
 // Helper function to get all ancestors of an item
 function getAncestors(itemId: string, collection: Collection | undefined): string[] {
-  if (!collection || !collection.items) return [];
+  if (collection === undefined) return [];
   
   const ancestors: string[] = [];
   
@@ -38,7 +38,7 @@ function getAncestors(itemId: string, collection: Collection | undefined): strin
 
 // Helper function to get all descendants of an item
 function getDescendants(itemId: string, collection: Collection | undefined): string[] {
-  if (!collection || !collection.items) return [];
+  if (collection === undefined) return [];
   
   const descendants: string[] = [];
   
@@ -49,13 +49,13 @@ function getDescendants(itemId: string, collection: Collection | undefined): str
       }
       if (item.type === 'folder') {
         const found = findItemAndCollectDescendants(item.items);
-        if (found) return found;
+        if (found !== null) return found;
       }
     }
     return null;
   }
   
-  function collectDescendants(item: CollectionItem) {
+  function collectDescendants(item: CollectionItem): void {
     if (item.type === 'folder') {
       for (const child of item.items) {
         descendants.push(child.id);
@@ -65,17 +65,17 @@ function getDescendants(itemId: string, collection: Collection | undefined): str
   }
   
   const item = findItemAndCollectDescendants(collection.items);
-  if (item) {
+  if (item !== null) {
     collectDescendants(item);
   }
   
   return descendants;
 }
 
-export function ExecutionSettings({ resource, onChange, allItems, currentItemId, collection }: ExecutionSettingsProps) {
+export function ExecutionSettings({ resource, onChange, allItems, currentItemId, collection }: ExecutionSettingsProps): JSX.Element {
   
-  const [localDependencies, setLocalDependencies] = React.useState<string[]>(resource.dependsOn || []);
-  const [localCondition, setLocalCondition] = React.useState<string>(resource.condition || '');
+  const [localDependencies, setLocalDependencies] = React.useState<string[]>(resource.dependsOn ?? []);
+  const [localCondition, setLocalCondition] = React.useState<string>(resource.condition ?? '');
   const [searchQuery, setSearchQuery] = React.useState<string>('');
   const [isModalOpen, setIsModalOpen] = React.useState(false);
 
@@ -95,7 +95,7 @@ export function ExecutionSettings({ resource, onChange, allItems, currentItemId,
   // Filter items based on search query
   const filteredItems = React.useMemo(
     () => {
-      if (!searchQuery.trim()) return availableItems;
+      if (searchQuery.trim() === '') return availableItems;
       const query = searchQuery.toLowerCase();
       return availableItems.filter(item => 
         item.name.toLowerCase().includes(query) || 
@@ -107,10 +107,10 @@ export function ExecutionSettings({ resource, onChange, allItems, currentItemId,
 
   // Get item name by ID
   const getItemNameById = (id: string): string => {
-    return allItems.find(item => item.id === id)?.name || id;
+      return allItems.find(item => item.id === id)?.name ?? id;
   };
 
-  const handleAddDependency = (itemId: string) => {
+  const handleAddDependency = (itemId: string): void => {
     if (localDependencies.includes(itemId)) return;
     
     const newDependencies = [...localDependencies, itemId];
@@ -123,7 +123,7 @@ export function ExecutionSettings({ resource, onChange, allItems, currentItemId,
     setSearchQuery('');
   };
 
-  const handleRemoveDependency = (itemId: string) => {
+  const handleRemoveDependency = (itemId: string): void => {
     const newDependencies = localDependencies.filter(id => id !== itemId);
     setLocalDependencies(newDependencies);
     onChange({
@@ -132,11 +132,11 @@ export function ExecutionSettings({ resource, onChange, allItems, currentItemId,
     });
   };
 
-  const handleConditionChange = (value: string) => {
+  const handleConditionChange = (value: string): void => {
     setLocalCondition(value);
     onChange({
       ...resource,
-      condition: value.trim() ? value : undefined
+      condition: value.trim() !== '' ? value : undefined
     });
   };
 
@@ -326,7 +326,7 @@ export function ExecutionSettings({ resource, onChange, allItems, currentItemId,
           }}
         />
 
-        {localCondition && (
+        {localCondition !== '' && (
           <div
             className="text-xs p-2 rounded flex items-start gap-2"
             style={{

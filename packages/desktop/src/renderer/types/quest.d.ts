@@ -1,78 +1,31 @@
 import type { Workspace } from './workspace';
 import type { Collection } from './request';
 import type { VariableValue } from '@apiquest/types';
-import type { ScannedPlugin } from '../../main/handlers/plugins.js';
-import type { AppSettings } from '../../main/SettingsService.js';
+import type { AppSettings, ThemeSetting, WorkspaceSecrets } from '../../main/SettingsService.js';
 import type { ExecutionEvent, RunRequestParams, RunRequestResult } from '../../types/execution.js';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
+import type { AICompletionRequest, AICompletionResponse } from '../../main/types/ai.js';
+import type { ScannedPlugin, MarketplacePlugin } from '../../main/types/plugins.js';
+import type { RunConfig, RunCollectionParams, RunnerExecutionState } from '../../main/types/runner.js';
+import type { ImportCollectionParams, ImportCollectionResult, WorkspaceMetadata, WorkspaceWithMetadata } from '../../main/types/workspace.js';
+import type { ResourceSessionState, WorkspaceSession } from '../../main/types/session.js';
 
-export interface MarketplacePlugin {
-  name: string;
-  version: string;
-  description: string;
-  apiquest?: ApiquestMetadata;
-  repository?: string;
-  homepage?: string;
-  author?: string;
-}
-
-export interface AICompletionRequest {
-  prompt: string;
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-  metadata?: Record<string, unknown>;
-}
-
-export interface AICompletionResponse {
-  text: string;
-  model?: string;
-  usage?: {
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-}
+export type {
+  AICompletionRequest,
+  AICompletionResponse,
+  MarketplacePlugin,
+  ResourceSessionState,
+  WorkspaceSession,
+  RunConfig,
+  RunCollectionParams,
+  RunnerExecutionState,
+  ScannedPlugin,
+  WorkspaceMetadata,
+  WorkspaceWithMetadata,
+};
 
 // Single source of truth for the preload API exposed as window.quest
 // Do not redeclare window.quest in individual files; import types and use this declaration.
-
-export type WorkspaceMetadata = {
-  id: string;
-  name: string;
-  description?: string;
-  createdAt: string;
-};
-
-export type WorkspaceWithMetadata = {
-  path: string;
-  metadata: WorkspaceMetadata | null;
-};
-
-// Individual resource's unsaved state (stored in session)
-export type ResourceSessionState = {
-  name?: string;
-  description?: string;
-  data?: any;
-  auth?: any; // Auth configuration (Auth type from fracture)
-  // Scripts for requests
-  preRequestScript?: string;
-  postRequestScript?: string;
-  // Scripts for folders
-  folderPreScript?: string;
-  folderPostScript?: string;
-  // Scripts for collections
-  collectionPreScript?: string;
-  collectionPostScript?: string;
-  // Execution control for requests
-  dependsOn?: string[];
-  condition?: string;
-  // Full resource snapshot (request/collection/folder). Used for restoring unsaved edits.
-  snapshot?: any;
-  // Transient editor-only state (e.g. request.data._ui for headers/params rows).
-  // Kept separate from `data` so strict schema-safe payloads remain available.
-  _ui?: Record<string, unknown>;
-};
 
 export type TabSessionInfo = {
   id: string;
@@ -84,71 +37,6 @@ export type TabSessionInfo = {
   metadata?: RequestMetadata | CollectionMetadata | FolderMetadata | RunnerMetadata;
   uiState?: {
     activeSubTab?: string;
-  };
-};
-
-// Runner configuration
-export interface RunConfig {
-  // Basic configuration
-  environmentId?: string;
-  
-  // Iterations (dual purpose like CLI)
-  iterations: number;  // Number of iterations (limits data rows if data provided, otherwise number of runs)
-  delay?: number;  // Delay between requests in ms (default: 0)
-  
-  // Test Data options
-  dataFile?: string;  // CSV/JSON iteration data file path (selected via file dialog)
-  disableCollectionTestData?: boolean;  // Ignore collection.testData if no dataFile provided (default: false)
-  // Note: iterations limits how many data rows are used
-  
-  // Parallel execution
-  parallel?: boolean;  // Enable parallel execution (only if collection allows)
-  concurrency?: number;  // Number of parallel requests
-  
-  // Advanced options (like Postman & CLI)
-  saveResponses?: boolean;  // Save response bodies (default: false)
-  persistVariables?: boolean;  // Save variable changes after run (default: false)
-  bail?: boolean;  // Stop run on first failure (CLI: --bail, default: false)
-  disableLogs?: boolean;  // Suppress console logs (CLI: --silent, default: false)
-  timeout?: number;  // Request timeout in ms (CLI: --timeout, default: undefined = no override)
-  insecure?: boolean;  // Disable SSL certificate validation (CLI: --insecure, default: false)
-}
-
-// Runner execution state
-export interface RunnerExecutionState {
-  runId: string;
-  runNumber: number;
-  collectionId: string;
-  collectionName: string;
-  selectedRequests: string[];
-  config: RunConfig;
-  status: 'pending' | 'running' | 'completed' | 'stopped' | 'error';
-  startedAt?: Date;
-  completedAt?: Date;
-  progress?: any;
-  results?: any;
-}
-
-// Collection run parameters
-export interface RunCollectionParams {
-  runId: string;
-  workspaceId: string;
-  collectionId: string;
-  selectedRequests: string[];
-  config: RunConfig;
-}
-
-export type WorkspaceSession = {
-  lastAccessed: string;
-  tabs: {
-    openTabs: TabSessionInfo[];
-    activeTabId: string | null;
-  };
-  sidebar: {
-    expandedFolders: Record<string, string[]>;
-  };
-  resources: {
-    [resourceId: string]: ResourceSessionState;
   };
 };
 
@@ -165,33 +53,20 @@ declare global {
         create: (name: string, customPath?: string) => Promise<string>;
         getMetadata: (workspacePath: string) => Promise<WorkspaceMetadata | null>;
         updateMetadata: (workspacePath: string, updates: Partial<WorkspaceMetadata>) => Promise<void>;
-        listWithMetadata: () => Promise<Array<{ path: string; metadata: WorkspaceMetadata | null }>>;
+        listWithMetadata: () => Promise<WorkspaceWithMetadata[]>;
         
         // Collection operations
         loadCollection: (workspaceId: string, collectionId: string) => Promise<Collection>;
-        saveCollection: (fworkspaceId: string, collectionId: string, collection: any) => Promise<void>;
+        saveCollection: (fworkspaceId: string, collectionId: string, collection: Collection) => Promise<void>;
         createCollection: (workspaceId: string, name: string, protocol: string) => Promise<string>;
         renameCollection: (workspaceId: string, collectionId: string, newName: string) => Promise<void>;
         duplicateCollection: (workspaceId: string, collectionId: string, newName: string) => Promise<string>;
         deleteCollection: (workspaceId: string, collectionId: string) => Promise<void>;
-        updateCollectionVariables: (workspaceId: string, collectionId: string, variables: any) => Promise<void>;
+        updateCollectionVariables: (workspaceId: string, collectionId: string, variables: Record<string, VariableValue>) => Promise<void>;
         importCollection: (
           workspaceId: string,
-          params?: {
-            pluginPackageName: string;
-            format: string;
-            fileExtensions: string[];
-            sourceKind: 'file' | 'directory';
-          }
-        ) => Promise<{
-          success: boolean;
-          fileName?: string;
-          collectionId?: string;
-          pluginPackageName?: string;
-          format?: string;
-          warnings?: string[];
-          errors?: string[];
-        } | null>;
+          params?: ImportCollectionParams
+        ) => Promise<ImportCollectionResult | null>;
         exportCollection: (workspaceId: string, collectionId: string) => Promise<string | null>;
         
         // Folder operations
@@ -227,9 +102,11 @@ declare global {
       // Settings
       settings: {
         getAll: () => Promise<AppSettings>;
-        get: (path: string) => Promise<any>;
-        update: (partial: AppSettings) => Promise<AppSettings>;
-        set: (path: string, value: any) => Promise<AppSettings>;
+        update: (partial: Partial<AppSettings>) => Promise<AppSettings>;
+        getTheme: () => Promise<ThemeSetting | undefined>;
+        setTheme: (theme: ThemeSetting) => Promise<AppSettings>;
+        getWorkspaceSecrets: (workspaceId: string) => Promise<WorkspaceSecrets | undefined>;
+        setWorkspaceSecrets: (workspaceId: string, secrets: WorkspaceSecrets) => Promise<AppSettings>;
       };
 
       // Session

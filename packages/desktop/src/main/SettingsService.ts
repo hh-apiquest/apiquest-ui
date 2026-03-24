@@ -56,6 +56,8 @@ export type AppSettings = {
   secrets?: SecretsSettings;
 };
 
+export type ThemeSetting = 'light' | 'dark' | 'system';
+
 const DEFAULT_SETTINGS: Required<AppSettings> = {
   ui: {
     workspaceDropdownLimit: 20
@@ -82,21 +84,30 @@ const DEFAULT_SETTINGS: Required<AppSettings> = {
   }
 };
 
-function deepMerge<T>(base: T, partial: Partial<T>): T {
-  if (partial === null || partial === undefined) return base;
-  if (typeof partial !== 'object') return partial as T;
-  if (Array.isArray(partial)) return partial as T;
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-  const result: any = { ...(base as any) };
-  for (const [key, value] of Object.entries(partial as any)) {
-    const baseValue = (base as any)[key];
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = deepMerge(baseValue ?? {}, value);
+function deepMerge<T>(base: T, partial: Partial<T>): T {
+  if (partial === null || partial === undefined) {
+    return base;
+  }
+
+  if (!isObjectRecord(base) || !isObjectRecord(partial)) {
+    return partial as T;
+  }
+
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(partial)) {
+    const baseValue = base[key];
+    if (isObjectRecord(value)) {
+      const mergeBase = isObjectRecord(baseValue) ? baseValue : {};
+      result[key] = deepMerge(mergeBase, value);
     } else {
       result[key] = value;
     }
   }
-  return result;
+  return result as T;
 }
 
 export class SettingsService {
@@ -112,8 +123,7 @@ export class SettingsService {
     const merged = deepMerge(DEFAULT_SETTINGS, stored);
 
     // Compute default workspace root lazily (needs app.getPath('userData') which is OS-dictated)
-    if (!merged.workspace) merged.workspace = {};
-    if (!merged.workspace.rootPath || merged.workspace.rootPath.trim() === '') {
+    if ((merged.workspace.rootPath ?? '').trim() === '') {
       merged.workspace.rootPath = path.join(app.getPath('userData'), 'workspaces');
     }
 
@@ -132,12 +142,28 @@ export class SettingsService {
     return next;
   }
 
-  async get(pathStr: string): Promise<any> {
+  async getTheme(): Promise<ThemeSetting | undefined> {
+    return await this.get('ui.theme') as ThemeSetting | undefined;
+  }
+
+  async setTheme(theme: ThemeSetting): Promise<AppSettings> {
+    return await this.set('ui.theme', theme);
+  }
+
+  async getWorkspaceSecrets(workspaceId: string): Promise<WorkspaceSecrets | undefined> {
+    return await this.get(`secrets.workspaces.${workspaceId}`) as WorkspaceSecrets | undefined;
+  }
+
+  async setWorkspaceSecrets(workspaceId: string, secrets: WorkspaceSecrets): Promise<AppSettings> {
+    return await this.set(`secrets.workspaces.${workspaceId}`, secrets);
+  }
+
+  async get(pathStr: string): Promise<unknown> {
     const settings = await this.getAll();
     return getByPath(settings, pathStr);
   }
 
-  async set(pathStr: string, value: any): Promise<AppSettings> {
+  async set(pathStr: string, value: unknown): Promise<AppSettings> {
     const current = await this.getAll();
     const next = setByPath(current, pathStr, value);
     await this.writeSettingsFile(next);
@@ -159,31 +185,44 @@ export class SettingsService {
   }
 }
 
-function getByPath(obj: any, pathStr: string): any {
-  if (!pathStr) return obj;
-  const parts = pathStr.split('.').filter(Boolean);
-  let cur = obj;
-  for (const p of parts) {
-    if (cur == null) return undefined;
-    cur = cur[p];
+function getByPath(obj: AppSettings, pathStr: string): unknown {
+  if (pathStr === '') {
+    return obj;
   }
-  return cur;
+
+  const parts = pathStr.split('.').filter(Boolean);
+  let current: unknown = obj;
+
+  for (const p of parts) {
+    if (!isObjectRecord(current)) {
+      return undefined;
+    }
+
+    current = current[p];
+  }
+
+  return current;
 }
 
-function setByPath<T extends object>(obj: T, pathStr: string, value: any): T {
+function setByPath<T extends object>(obj: T, pathStr: string, value: unknown): T {
   const parts = pathStr.split('.').filter(Boolean);
-  if (parts.length === 0) return obj;
+  if (parts.length === 0) {
+    return obj;
+  }
 
-  const clone: any = Array.isArray(obj) ? [...(obj as any)] : { ...(obj as any) };
-  let cur: any = clone;
+  const clone: Record<string, unknown> = isObjectRecord(obj) ? { ...obj } : {};
+  let current: Record<string, unknown> = clone;
+
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
-    const nextVal = cur[key];
-    cur[key] = nextVal && typeof nextVal === 'object' && !Array.isArray(nextVal) ? { ...nextVal } : {};
-    cur = cur[key];
+    const nextValue = current[key];
+    const nextRecord = isObjectRecord(nextValue) ? { ...nextValue } : {};
+    current[key] = nextRecord;
+    current = nextRecord;
   }
-  cur[parts[parts.length - 1]] = value;
-  return clone;
+
+  current[parts[parts.length - 1]] = value;
+  return clone as T;
 }
 
 export const settingsService = new SettingsService();

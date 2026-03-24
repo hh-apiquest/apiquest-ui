@@ -8,8 +8,9 @@ import type {
 import type { QuestApi } from '../main/types/preload.js';
 import type { MarketplacePlugin, ScannedPlugin } from '../main/types/plugins.js';
 import type { RunCollectionParams, RunnerExecutionState } from '../main/types/runner.js';
+import type { WorkspaceSession } from '../main/types/session.js';
 import type { ImportCollectionParams, WorkspaceMetadata } from '../main/types/workspace.js';
-import type { AppSettings } from '../main/SettingsService.js';
+import type { AppSettings, ThemeSetting, WorkspaceSecrets } from '../main/SettingsService.js';
 import type { ExecutionEvent, RunRequestParams } from '../types/execution.js';
 import type { Collection, Environment, VariableValue } from '@apiquest/types';
 
@@ -157,19 +158,21 @@ const api: QuestApi = {
     save: (variables: Record<string, VariableValue>) => ipcRenderer.invoke('globalVariables:save', variables),
   },
 
-  // App settings (settings.json in userData)
+    // App settings (settings.json in userData)
   settings: {
     getAll: () => ipcRenderer.invoke('settings:getAll'),
-    get: (path: string) => ipcRenderer.invoke('settings:get', path),
-    update: (partial: AppSettings) => ipcRenderer.invoke('settings:update', partial),
-    set: (path: string, value: unknown) => ipcRenderer.invoke('settings:set', path, value),
+    update: (partial: Partial<AppSettings>) => ipcRenderer.invoke('settings:update', partial),
+    getTheme: (): Promise<ThemeSetting | undefined> => ipcRenderer.invoke('settings:getTheme'),
+    setTheme: (theme: ThemeSetting): Promise<AppSettings> => ipcRenderer.invoke('settings:setTheme', theme),
+    getWorkspaceSecrets: (workspaceId: string): Promise<WorkspaceSecrets | undefined> => ipcRenderer.invoke('settings:getWorkspaceSecrets', workspaceId),
+    setWorkspaceSecrets: (workspaceId: string, secrets: WorkspaceSecrets): Promise<AppSettings> => ipcRenderer.invoke('settings:setWorkspaceSecrets', workspaceId, secrets),
   },
 
   // Session management (sessions.json in userData)
   session: {
     get: (workspaceId: string) => ipcRenderer.invoke('session:get', workspaceId),
-    save: (workspaceId, session) => ipcRenderer.invoke('session:save', workspaceId, session),
-    update: (workspaceId, updates) => ipcRenderer.invoke('session:update', workspaceId, updates),
+    save: (workspaceId: string, session: WorkspaceSession) => ipcRenderer.invoke('session:save', workspaceId, session),
+    update: (workspaceId: string, updates: Partial<WorkspaceSession>) => ipcRenderer.invoke('session:update', workspaceId, updates),
   },
 
   // Runner - execution-based architecture

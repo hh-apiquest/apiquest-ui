@@ -14,7 +14,7 @@ export interface TrashedItem {
   parentPath?: string;  // Path within collection
   
   // Data backup
-  data: any;  // Full JSON backup
+  data: unknown;  // Full JSON backup
   
   // Trash metadata
   deletedAt: Date;

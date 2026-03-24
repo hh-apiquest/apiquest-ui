@@ -1,21 +1,29 @@
 // Settings IPC handlers
 import { ipcMain } from 'electron';
-import { settingsService, type AppSettings } from '../SettingsService.js';
+import { settingsService, type AppSettings, type ThemeSetting, type WorkspaceSecrets } from '../SettingsService.js';
 
 export function registerSettingsHandlers(): void {
   ipcMain.handle('settings:getAll', async () => {
     return await settingsService.getAll();
   });
 
-  ipcMain.handle('settings:update', async (_event, partial: AppSettings) => {
+  ipcMain.handle('settings:update', async (_event, partial: Partial<AppSettings>) => {
     return await settingsService.update(partial);
   });
 
-  ipcMain.handle('settings:get', async (_event, pathStr: string) => {
-    return (await settingsService.get(pathStr)) as unknown;
+  ipcMain.handle('settings:getTheme', async () => {
+    return await settingsService.getTheme();
   });
 
-  ipcMain.handle('settings:set', async (_event, pathStr: string, value: unknown) => {
-    return await settingsService.set(pathStr, value);
+  ipcMain.handle('settings:setTheme', async (_event, theme: ThemeSetting) => {
+    return await settingsService.setTheme(theme);
+  });
+
+  ipcMain.handle('settings:getWorkspaceSecrets', async (_event, workspaceId: string) => {
+    return await settingsService.getWorkspaceSecrets(workspaceId);
+  });
+
+  ipcMain.handle('settings:setWorkspaceSecrets', async (_event, workspaceId: string, secrets: WorkspaceSecrets) => {
+    return await settingsService.setWorkspaceSecrets(workspaceId, secrets);
   });
 }

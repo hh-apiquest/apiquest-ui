@@ -1,5 +1,6 @@
 // AppBar - Compact top menu with workspace management
 import { useState, useEffect } from 'react';
+import type { CSSProperties, JSX } from 'react';
 import { useWorkspace, useTheme, useSettings, useScreenMode } from '../../contexts';
 import type { WorkspaceWithMetadata } from '../../types/quest';
 import type { VariableValue } from '@apiquest/types';
@@ -21,7 +22,12 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline';
 
-export function AppBar() {
+type ElectronRegionStyle = CSSProperties & { WebkitAppRegion: 'drag' | 'no-drag' };
+
+const dragRegionStyle: ElectronRegionStyle = { WebkitAppRegion: 'drag' };
+const noDragRegionStyle: ElectronRegionStyle = { WebkitAppRegion: 'no-drag' };
+
+export function AppBar(): JSX.Element {
   const { workspace, openWorkspace, activeEnvironment, setActiveEnvironment } = useWorkspace();
   const { theme, actualTheme, setTheme } = useTheme();
   const { settings } = useSettings();
@@ -33,16 +39,16 @@ export function AppBar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   useEffect(() => {
-    loadGlobalVariables();
+    void loadGlobalVariables();
   }, []);
 
   useEffect(() => {
     if (dropdownOpen) {
-      loadWorkspaces();
+      void loadWorkspaces();
     }
   }, [dropdownOpen]);
 
-  const loadGlobalVariables = async () => {
+  const loadGlobalVariables = async (): Promise<void> => {
     try {
       const vars = await window.quest.globalVariables.load();
       setGlobalVariables(vars);
@@ -51,7 +57,7 @@ export function AppBar() {
     }
   };
 
-  const loadWorkspaces = async () => {
+  const loadWorkspaces = async (): Promise<void> => {
     try {
       const result = await window.quest.workspace.listWithMetadata();
       setWorkspaces(result);
@@ -60,7 +66,7 @@ export function AppBar() {
     }
   };
 
-  const handleSaveGlobalVars = async (vars: Record<string, VariableValue>) => {
+  const handleSaveGlobalVars = async (vars: Record<string, VariableValue>): Promise<void> => {
     try {
       await window.quest.globalVariables.save(vars);
       setGlobalVariables(vars);
@@ -69,16 +75,16 @@ export function AppBar() {
     }
   };
 
-  const workspaceDropdownLimit = settings?.ui?.workspaceDropdownLimit || 20;
+  const workspaceDropdownLimit = settings?.ui?.workspaceDropdownLimit ?? 20;
 
   const portalContainer =
     typeof document !== 'undefined'
-      ? ((document.querySelector('.radix-themes') as HTMLElement | null) ?? document.body)
+      ? (document.querySelector('.radix-themes') ?? document.body)
       : undefined;
 
   const filteredWorkspaces = workspaces
     .filter((ws) => {
-      const name = ws.metadata?.name || ws.path.split(/[\\/]/).pop() || '';
+      const name = ws.metadata?.name ?? ws.path.split(/[\\/]/).pop() ?? '';
       return name.toLowerCase().includes(workspaceSearch.toLowerCase());
     })
     .slice(0, workspaceDropdownLimit);
@@ -86,7 +92,7 @@ export function AppBar() {
   return (
     <div
       className="h-10 border-b flex items-center justify-between px-2"
-      style={{ WebkitAppRegion: 'drag' } as any}
+      style={dragRegionStyle}
     >
       <div className="flex items-center gap-1">
         <img
@@ -107,10 +113,10 @@ export function AppBar() {
               background: 'transparent',
               cursor: 'pointer',
               WebkitAppRegion: 'no-drag'
-            } as any}
+            } as ElectronRegionStyle}
           >
             <FolderIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
-            <span>{workspace?.name || 'No Workspace'}</span>
+            <span>{workspace?.name ?? 'No Workspace'}</span>
             <ChevronDownIcon className="w-3.5 h-3.5" style={{ color: 'var(--gray-9)' }} />
           </DropdownMenu.Trigger>
 
@@ -136,7 +142,7 @@ export function AppBar() {
                   </div>
                 ) : (
                   filteredWorkspaces.map((ws) => {
-                    const name = ws.metadata?.name || ws.path.split(/[\\/]/).pop() || 'Unnamed';
+                      const name = ws.metadata?.name ?? ws.path.split(/[\\/]/).pop() ?? 'Unnamed';
                     const isActive = workspace?.path === ws.path;
                     
                     return (
@@ -144,8 +150,8 @@ export function AppBar() {
                         key={ws.path}
                         className="px-2 py-1 text-xs rounded cursor-pointer"
                         style={{ background: isActive ? 'var(--accent-3)' : 'transparent' }}
-                        onSelect={async () => {
-                          await openWorkspace(ws.path);
+                        onSelect={() => {
+                          void openWorkspace(ws.path);
                           setDropdownOpen(false);
                         }}
                       >
@@ -197,10 +203,10 @@ export function AppBar() {
               background: 'transparent',
               cursor: 'pointer',
               WebkitAppRegion: 'no-drag'
-            } as any}
+            } as ElectronRegionStyle}
           >
             <GlobeAltIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
-            <span>{activeEnvironment?.name || 'No Environment'}</span>
+            <span>{activeEnvironment?.name ?? 'No Environment'}</span>
             <ChevronDownIcon className="w-3.5 h-3.5" style={{ color: 'var(--gray-9)' }} />
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal container={portalContainer}>
@@ -211,10 +217,10 @@ export function AppBar() {
               >
                 <div className="flex items-center justify-between">
                   <span>No Environment</span>
-                  {!activeEnvironment && <CheckIcon className="w-3.5 h-3.5" style={{ color: 'var(--accent-9)' }} />}
+                  {activeEnvironment === null && <CheckIcon className="w-3.5 h-3.5" style={{ color: 'var(--accent-9)' }} />}
                 </div>
               </DropdownMenu.Item>
-              {workspace && workspace.environments.length > 0 && (
+              {workspace !== null && workspace.environments.length > 0 && (
                 <>
                   <DropdownMenu.Separator style={{ height: '1px', background: 'var(--gray-6)', margin: '4px 0' }} />
                   {workspace.environments.map((env) => (
@@ -245,7 +251,7 @@ export function AppBar() {
             background: 'transparent',
             cursor: 'pointer',
             WebkitAppRegion: 'no-drag'
-          } as any}
+          } as ElectronRegionStyle}
           title="Global Variables"
         >
           <VariableIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
@@ -253,7 +259,7 @@ export function AppBar() {
         </button>
       </div>
 
-      <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as any}>
+      <div className="flex items-center gap-1" style={noDragRegionStyle}>
         <button
           className="p-1 rounded cursor-pointer"
           style={{ border: 'none', background: 'transparent' }}
@@ -279,7 +285,7 @@ export function AppBar() {
         <div style={{ height: '24px', width: '1px', background: 'var(--gray-7)', margin: '0 4px' }} />
 
         <button
-          onClick={() => window.quest.window.minimize()}
+          onClick={() => { void window.quest.window.minimize(); }}
           className="p-1 rounded cursor-pointer"
           style={{ border: 'none', background: 'transparent' }}
           title="Minimize"
@@ -287,7 +293,7 @@ export function AppBar() {
           <MinusIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
         </button>
         <button
-          onClick={() => window.quest.window.maximize()}
+          onClick={() => { void window.quest.window.maximize(); }}
           className="p-1 rounded cursor-pointer"
           style={{ border: 'none', background: 'transparent' }}
           title="Maximize/Restore"
@@ -295,7 +301,7 @@ export function AppBar() {
           <Square2StackIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
         </button>
         <button
-          onClick={() => window.quest.window.close()}
+          onClick={() => { void window.quest.window.close(); }}
           className="p-1 rounded cursor-pointer"
           style={{ border: 'none', background: 'transparent' }}
           title="Close"
@@ -309,7 +315,7 @@ export function AppBar() {
         onOpenChange={setShowGlobalVars}
         title="Global Variables"
         variables={globalVariables}
-        onSave={handleSaveGlobalVars}
+        onSave={(vars) => { void handleSaveGlobalVars(vars); }}
         showEnabled={true}
       />
     </div>

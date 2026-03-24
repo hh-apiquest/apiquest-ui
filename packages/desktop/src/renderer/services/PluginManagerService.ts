@@ -6,17 +6,22 @@ import type {
   IImporterPluginUI,
   ApiquestMetadata
 } from '@apiquest/plugin-ui-types';
+import type { ScannedPlugin } from '../../main/types/plugins.js';
 import type { InstalledPluginInfo } from '../types/plugin';
+import type { PluginModuleDefault, VaultPluginInfo } from '../types/plugin-manager';
 import { EventEmitter } from 'eventemitter3';
 import { settingsService } from './SettingsService';
 
-// ScannedPlugin type from IPC handler
-interface ScannedPlugin {
-  name: string;
-  version: string;
-  main: string;
-  metadata: ApiquestMetadata;
-  enabled: boolean;
+function toAuthPluginArray(pluginDefault: PluginModuleDefault['default']): IAuthPluginUI[] {
+  return Array.isArray(pluginDefault)
+    ? pluginDefault as IAuthPluginUI[]
+    : [pluginDefault as IAuthPluginUI];
+}
+
+function toImporterPluginArray(pluginDefault: PluginModuleDefault['default']): IImporterPluginUI[] {
+  return Array.isArray(pluginDefault)
+    ? pluginDefault as IImporterPluginUI[]
+    : [pluginDefault as IImporterPluginUI];
 }
 
 export class PluginManagerService extends EventEmitter {
@@ -113,9 +118,10 @@ export class PluginManagerService extends EventEmitter {
     
     // Dynamic import via plugin:// protocol
     // @vite-ignore tells Vite to skip this
-    const pluginModule = await import(/* @vite-ignore */ pluginUrl);
+    const pluginModule = await import(/* @vite-ignore */ pluginUrl) as PluginModuleDefault;
+    const pluginDefault = pluginModule.default;
     
-    if (!pluginModule.default) {
+    if (pluginDefault === undefined) {
       throw new Error(`Plugin ${pkg.name} does not have default export`);
     }
     
@@ -123,13 +129,13 @@ export class PluginManagerService extends EventEmitter {
     const type = pkg.metadata.type;
     
     if (type === 'protocol-ui') {
-      const plugin = pluginModule.default;
+      const plugin = pluginDefault as IProtocolPluginUI;
       this.registerProtocolPlugin(plugin, pkg.name);
       this.protocolMetadata.set(plugin.protocol, pkg.metadata);
       console.log(`[PluginManager]   Protocol loaded: ${plugin.protocol} (package: ${pkg.name})`);
       
     } else if (type === 'auth-ui') {
-      const plugins = Array.isArray(pluginModule.default) ? pluginModule.default : [pluginModule.default];
+      const plugins = toAuthPluginArray(pluginDefault);
       
       plugins.forEach((authUI: IAuthPluginUI) => {
         this.registerAuthPlugin(authUI, pkg.name);
@@ -138,7 +144,7 @@ export class PluginManagerService extends EventEmitter {
       });
 
     } else if (type === 'importer-ui') {
-      const plugins = Array.isArray(pluginModule.default) ? pluginModule.default : [pluginModule.default];
+      const plugins = toImporterPluginArray(pluginDefault);
 
       plugins.forEach((importerUI: IImporterPluginUI) => {
         // Canonical importer key is npm package name (unique in npm registry, including scope).
@@ -158,11 +164,11 @@ export class PluginManagerService extends EventEmitter {
    */
   async setPluginEnabled(packageName: string, enabled: boolean): Promise<void> {
     const settings = await settingsService.getAll();
-    const plugins = settings.plugins || [];
+    const plugins = settings.plugins ?? [];
     
     // Find existing or create new
     const existing = plugins.find(p => p.name === packageName);
-    if (existing) {
+    if (existing !== undefined) {
       existing.enabled = enabled;
     } else {
       plugins.push({ name: packageName, enabled });
@@ -293,10 +299,10 @@ export class PluginManagerService extends EventEmitter {
    */
   async setPluginSettings(packageName: string, pluginSettings: Record<string, unknown> | undefined): Promise<void> {
     const settings = await settingsService.getAll();
-    const plugins = settings.plugins || [];
+    const plugins = settings.plugins ?? [];
 
     const existing = plugins.find(p => p.name === packageName);
-    if (existing) {
+    if (existing !== undefined) {
       if (pluginSettings === undefined || Object.keys(pluginSettings).length === 0) {
         delete existing.settings;
       } else {
@@ -315,12 +321,12 @@ export class PluginManagerService extends EventEmitter {
 
   async getPluginSettings(packageName: string): Promise<Record<string, unknown> | undefined> {
     const settings = await settingsService.getAll();
-    const plugins = settings.plugins || [];
+    const plugins = settings.plugins ?? [];
     const existing = plugins.find(p => p.name === packageName);
     return existing?.settings;
   }
 
-  getAllVaultPlugins(): any[] {
+  getAllVaultPlugins(): VaultPluginInfo[] {
     // Temporary hardcoded
     return [{
       name: 'file-vault',
@@ -342,7 +348,7 @@ export class PluginManagerService extends EventEmitter {
     for (const [packageName, scanned] of this.scannedPlugins.entries()) {
       const type = scanned.metadata.type;
       // Use the npm package name as the display name
-      const displayName = scanned.name || packageName;
+      const displayName = scanned.name !== '' ? scanned.name : packageName;
 
       console.log(`[PluginManager]   Plugin: ${packageName} type=${type} enabled=${scanned.enabled} v${scanned.version}`);
 
@@ -393,7 +399,7 @@ export class PluginManagerService extends EventEmitter {
    */
   getSupportedAuthTypesForProtocol(protocol: string): string[] {
     const metadata = this.protocolMetadata.get(protocol);
-    if (!metadata?.capabilities?.supports?.authTypes) {
+    if (metadata?.capabilities?.supports?.authTypes === undefined) {
       return this.getSupportedAuthTypes();
     }
     

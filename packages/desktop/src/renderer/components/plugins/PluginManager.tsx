@@ -23,29 +23,25 @@ import {
 } from '@heroicons/react/24/outline';
 import { pluginManagerService } from '../../services/PluginManagerService';
 import type { InstalledPluginInfo } from '../../types/plugin';
-import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
+import type { MarketplacePlugin } from '../../../main/types/plugins';
+import type { PluginManagerProps, PluginTypeFilter } from '../../types/plugin-manager-view';
+import { isMarketplacePlugin } from '../../types/plugin-manager-view';
 
-type PluginTypeFilter = Extract<
-  ApiquestMetadata['type'],
-  'auth-ui' |
-  'protocol-ui' |
-  'importer-ui' |
-  'exporter-ui' |
-  'visualizer-ui' |
-  'extension-ui'
-  > | 'all';
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message !== ''
+    ? error.message
+    : 'Unexpected error during plugin installation.';
+}
 
-interface PluginManagerProps {
-  pluginType?: PluginTypeFilter;
-  initialSearch?: string;
-  onPluginInstalled?: (pluginId: string) => void;
+function matchesPluginType(type: PluginTypeFilter, pluginType: PluginTypeFilter | undefined): boolean {
+  return type === 'all' || pluginType === type;
 }
 
 export function PluginManager({
   pluginType = 'all',
   initialSearch = '',
   onPluginInstalled
-}: PluginManagerProps = {}) {
+}: PluginManagerProps = {}): React.JSX.Element {
   const [installedPlugins, setInstalledPlugins] = React.useState<InstalledPluginInfo[]>([]);
   const [installedSearchQuery, setInstalledSearchQuery] = React.useState(initialSearch);
   const [installing, setInstalling] = React.useState<string | null>(null);
@@ -54,14 +50,16 @@ export function PluginManager({
   const [selectedType, setSelectedType] = React.useState<PluginTypeFilter>(pluginType);
 
   // Marketplace: full list from npm, filtered client-side
-  const [allMarketplacePlugins, setAllMarketplacePlugins] = React.useState<any[]>([]);
+  const [allMarketplacePlugins, setAllMarketplacePlugins] = React.useState<MarketplacePlugin[]>([]);
   const [marketplaceLoaded, setMarketplaceLoaded] = React.useState(false);
   const [loadingMarketplace, setLoadingMarketplace] = React.useState(false);
   const [marketplaceSearchQuery, setMarketplaceSearchQuery] = React.useState('');
 
-  React.useEffect(() => {
+  React.useEffect((): (() => void) => {
     loadInstalledPlugins();
-    const handlePluginsReloaded = () => loadInstalledPlugins();
+    const handlePluginsReloaded = (): void => {
+      loadInstalledPlugins();
+    };
     pluginManagerService.on('pluginsReloaded', handlePluginsReloaded);
     return () => {
       pluginManagerService.off('pluginsReloaded', handlePluginsReloaded);
@@ -69,21 +67,22 @@ export function PluginManager({
   }, []);
 
   // Auto-load marketplace on first visit to that tab
-  React.useEffect(() => {
+  React.useEffect((): void => {
     if (activeTab === 'marketplace' && !marketplaceLoaded) {
-      loadMarketplace();
+      void loadMarketplace();
     }
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, marketplaceLoaded]);
 
-  const loadInstalledPlugins = () => {
+  const loadInstalledPlugins = (): void => {
     setInstalledPlugins(pluginManagerService.getInstalledPlugins());
   };
 
-  const loadMarketplace = async () => {
+  const loadMarketplace = async (): Promise<void> => {
     setLoadingMarketplace(true);
     try {
       const results = await window.quest.plugins.searchMarketplace('', 'all');
-      setAllMarketplacePlugins(results);
+      const typedResults = results.filter(isMarketplacePlugin);
+      setAllMarketplacePlugins(typedResults);
       setMarketplaceLoaded(true);
     } catch (err) {
       console.error('[PluginManager] Failed to load marketplace:', err);
@@ -93,7 +92,7 @@ export function PluginManager({
     }
   };
 
-  const handleTogglePlugin = async (pluginId: string, enabled: boolean) => {
+  const handleTogglePlugin = async (pluginId: string, enabled: boolean): Promise<void> => {
     try {
       await pluginManagerService.setPluginEnabled(pluginId, enabled);
       loadInstalledPlugins();
@@ -102,7 +101,7 @@ export function PluginManager({
     }
   };
 
-  const handleInstallPlugin = async (packageName: string) => {
+  const handleInstallPlugin = async (packageName: string): Promise<void> => {
     setInstalling(packageName);
     setInstallError(null);
     try {
@@ -112,16 +111,16 @@ export function PluginManager({
         loadInstalledPlugins();
         onPluginInstalled?.(packageName);
       } else {
-        setInstallError(result.error || 'Installation failed for an unknown reason.');
+        setInstallError(result.error ?? 'Installation failed for an unknown reason.');
       }
-    } catch (err: any) {
-      setInstallError(err?.message || 'Unexpected error during plugin installation.');
+    } catch (err: unknown) {
+      setInstallError(getErrorMessage(err));
     } finally {
       setInstalling(null);
     }
   };
 
-  const handleUninstallPlugin = async (pluginId: string) => {
+  const handleUninstallPlugin = async (pluginId: string): Promise<void> => {
     console.log('[PluginManager] Uninstalling plugin:', pluginId);
     try {
       await window.quest.plugins.remove(pluginId);
@@ -132,19 +131,19 @@ export function PluginManager({
     }
   };
 
-  const filteredInstalledPlugins = installedPlugins.filter(p => {
+  const filteredInstalledPlugins = installedPlugins.filter((plugin) => {
     const q = installedSearchQuery.toLowerCase();
-    const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
-    const matchesType = selectedType === 'all' || p.type === selectedType;
+    const matchesSearch = q === '' || plugin.name.toLowerCase().includes(q) || plugin.id.toLowerCase().includes(q);
+    const matchesType = selectedType === 'all' || plugin.type === selectedType;
     return matchesSearch && matchesType;
   });
 
-  const filteredMarketplacePlugins = allMarketplacePlugins.filter(pkg => {
+  const filteredMarketplacePlugins = allMarketplacePlugins.filter((pkg) => {
     const q = marketplaceSearchQuery.toLowerCase();
-    const matchesSearch = !q ||
-      pkg.name?.toLowerCase().includes(q) ||
-      pkg.description?.toLowerCase().includes(q);
-    const matchesType = selectedType === 'all' || pkg.apiquest?.type === selectedType;
+    const matchesSearch = q === ''
+      || pkg.name.toLowerCase().includes(q)
+      || pkg.description.toLowerCase().includes(q);
+    const matchesType = matchesPluginType(selectedType, pkg.apiquest?.type as PluginTypeFilter | undefined);
     return matchesSearch && matchesType;
   });
 
@@ -156,7 +155,7 @@ export function PluginManager({
           <PuzzlePieceIcon className="w-5 h-5" style={{ color: 'var(--accent-9)' }} />
           <Text size="4" weight="medium">Plugin Manager</Text>
         </Flex>
-        <Button size="1" variant="soft" onClick={() => pluginManagerService.reloadPlugins()}>
+        <Button size="1" variant="soft" onClick={() => { void pluginManagerService.reloadPlugins(); }}>
           <ArrowPathIcon className="w-3 h-3" />
           Reload Plugins
         </Button>
@@ -189,7 +188,7 @@ export function PluginManager({
                   </TextField.Slot>
                 </TextField.Root>
               </Box>
-              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as PluginTypeFilter)}>
+              <Tabs.Root value={selectedType} onValueChange={(value) => { setSelectedType(value as PluginTypeFilter); }}>
                 <Tabs.List size="1">
                   <Tabs.Trigger value="all">All</Tabs.Trigger>
                   <Tabs.Trigger value="protocol-ui">Protocol</Tabs.Trigger>
@@ -202,9 +201,9 @@ export function PluginManager({
               <Flex direction="column" align="center" justify="center" py="8" gap="2">
                 <PuzzlePieceIcon className="w-10 h-10" style={{ color: 'var(--gray-7)' }} />
                 <Text size="2" color="gray">
-                  {installedSearchQuery ? 'No plugins match your search' : 'No plugins installed'}
+                  {installedSearchQuery !== '' ? 'No plugins match your search' : 'No plugins installed'}
                 </Text>
-                {!installedSearchQuery && (
+                {installedSearchQuery === '' && (
                   <Text size="1" color="gray">Install plugins from the Marketplace tab</Text>
                 )}
               </Flex>
@@ -241,7 +240,7 @@ export function PluginManager({
                           <Switch
                             size="1"
                             checked={plugin.enabled}
-                            onCheckedChange={(checked) => handleTogglePlugin(plugin.id, checked)}
+                            onCheckedChange={(checked) => { void handleTogglePlugin(plugin.id, checked); }}
                             disabled={plugin.bundled}
                           />
                           <Text size="1" color={plugin.enabled ? 'green' : 'gray'}>
@@ -255,7 +254,7 @@ export function PluginManager({
                             size="1"
                             variant="ghost"
                             color="red"
-                            onClick={() => handleUninstallPlugin(plugin.id)}
+                            onClick={() => { void handleUninstallPlugin(plugin.id); }}
                           >
                             <TrashIcon className="w-3 h-3" />
                           </IconButton>
@@ -288,7 +287,7 @@ export function PluginManager({
               <Button
                 size="1"
                 variant="soft"
-                onClick={loadMarketplace}
+                onClick={() => { void loadMarketplace(); }}
                 disabled={loadingMarketplace}
               >
                 {loadingMarketplace ? <Spinner size="1" /> : <ArrowPathIcon className="w-3 h-3" />}
@@ -297,7 +296,7 @@ export function PluginManager({
             </Flex>
 
             <Flex mb="3">
-              <Tabs.Root value={selectedType} onValueChange={(v) => setSelectedType(v as PluginTypeFilter)}>
+              <Tabs.Root value={selectedType} onValueChange={(value) => { setSelectedType(value as PluginTypeFilter); }}>
                 <Tabs.List size="1">
                   <Tabs.Trigger value="all">All</Tabs.Trigger>
                   <Tabs.Trigger value="protocol-ui">Protocol</Tabs.Trigger>
@@ -307,7 +306,7 @@ export function PluginManager({
             </Flex>
 
             {/* Installation error */}
-            {installError && (
+            {installError !== null && installError !== '' && (
               <Flex
                 align="start"
                 gap="2"
@@ -327,7 +326,7 @@ export function PluginManager({
                   <Text size="1" style={{ color: 'var(--red-11)' }}>{installError}</Text>
                 </Box>
                 <button
-                  onClick={() => setInstallError(null)}
+                    onClick={() => { setInstallError(null); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red-9)', padding: 0, flexShrink: 0 }}
                   aria-label="Dismiss"
                 >
@@ -347,17 +346,17 @@ export function PluginManager({
                 <PuzzlePieceIcon className="w-10 h-10" style={{ color: 'var(--gray-7)' }} />
                 <Text size="2" color="gray">
                   {marketplaceLoaded
-                    ? (marketplaceSearchQuery ? 'No plugins match your filter' : 'No desktop plugins found')
+                    ? (marketplaceSearchQuery !== '' ? 'No plugins match your filter' : 'No desktop plugins found')
                     : 'Loading...'}
                 </Text>
-                {marketplaceLoaded && !marketplaceSearchQuery && (
+                {marketplaceLoaded && marketplaceSearchQuery === '' && (
                   <Text size="1" color="gray">Click Refresh to reload from npm</Text>
                 )}
               </Flex>
             ) : (
               <Flex direction="column" gap="2">
                 {filteredMarketplacePlugins.map((pkg) => {
-                  const isInstalled = installedPlugins.some(p => p.id === pkg.name);
+                  const isInstalled = installedPlugins.some((plugin) => plugin.id === pkg.name);
                   const isInstalling = installing === pkg.name;
 
                   return (
@@ -378,7 +377,7 @@ export function PluginManager({
                         <Flex align="center" gap="2" mb="1">
                           <Text size="1" weight="medium">{pkg.name}</Text>
                           <Badge size="1">{pkg.version}</Badge>
-                          {pkg.apiquest?.type && (
+                          {pkg.apiquest?.type !== undefined && (
                             <Badge
                               size="1"
                               color={pkg.apiquest.type === 'protocol-ui' ? 'blue' : pkg.apiquest.type === 'auth-ui' ? 'green' : 'gray'}
@@ -387,7 +386,7 @@ export function PluginManager({
                             </Badge>
                           )}
                         </Flex>
-                        {pkg.description && (
+                        {pkg.description !== '' && (
                           <Text size="1" color="gray" style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {pkg.description}
                           </Text>
@@ -401,7 +400,7 @@ export function PluginManager({
                       ) : (
                         <Button
                           size="1"
-                          onClick={() => handleInstallPlugin(pkg.name)}
+                          onClick={() => { void handleInstallPlugin(pkg.name); }}
                           disabled={installing !== null && !isInstalling}
                         >
                           {isInstalling ? <Spinner size="1" /> : <ArrowDownTrayIcon className="w-3 h-3" />}

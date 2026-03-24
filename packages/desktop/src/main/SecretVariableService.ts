@@ -37,6 +37,28 @@ function cloneVariableForFile(value: VariableValue): VariableValue {
   return value;
 }
 
+function cloneSecretRecord(
+  record: Record<string, SecretPrimitive> | undefined
+): Record<string, SecretPrimitive> {
+  return record !== undefined ? { ...record } : {};
+}
+
+function cloneWorkspaceSecretCollections(
+  workspaceSecrets: WorkspaceSecrets
+): Record<string, Record<string, SecretPrimitive>> {
+  return workspaceSecrets.collections !== undefined
+    ? { ...workspaceSecrets.collections }
+    : {};
+}
+
+function cloneWorkspaceSecretEnvironments(
+  workspaceSecrets: WorkspaceSecrets
+): Record<string, Record<string, SecretPrimitive>> {
+  return workspaceSecrets.environments !== undefined
+    ? { ...workspaceSecrets.environments }
+    : {};
+}
+
 export class SecretVariableService {
   private encodeBeforeStore(value: SecretPrimitive): SecretPrimitive {
     // Encryption hook point (currently pass-through)
@@ -52,7 +74,7 @@ export class SecretVariableService {
     const sanitizedVariables: VariableRecord = {};
     const secrets: Record<string, SecretPrimitive> = {};
 
-    if (!variables || !isObjectValue(variables)) {
+    if (variables === undefined || !isObjectValue(variables)) {
       return { sanitizedVariables, secrets };
     }
 
@@ -78,7 +100,7 @@ export class SecretVariableService {
     secrets: Record<string, SecretPrimitive>
   ): VariableRecord {
     const hydratedVariables: VariableRecord = {};
-    const source = variables && isObjectValue(variables) ? variables : {};
+    const source = variables !== undefined && isObjectValue(variables) ? variables : {};
 
     for (const [key, value] of Object.entries(source)) {
       if (isSecretVariableObject(value)) {
@@ -100,12 +122,11 @@ export class SecretVariableService {
   }
 
   private async getWorkspaceSecrets(workspaceId: string): Promise<WorkspaceSecrets> {
-    const value = await settingsService.get(`secrets.workspaces.${workspaceId}`);
-    return isObjectValue(value) ? (value as WorkspaceSecrets) : {};
+    return await settingsService.getWorkspaceSecrets(workspaceId) ?? {};
   }
 
   private async setWorkspaceSecrets(workspaceId: string, secrets: WorkspaceSecrets): Promise<void> {
-    await settingsService.set(`secrets.workspaces.${workspaceId}`, secrets);
+    await settingsService.setWorkspaceSecrets(workspaceId, secrets);
   }
 
   async getCollectionSecrets(workspaceId: string, collectionId: string): Promise<Record<string, SecretPrimitive>> {
@@ -134,9 +155,7 @@ export class SecretVariableService {
     secrets: Record<string, SecretPrimitive>
   ): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const collections = {
-      ...(workspaceSecrets.collections || {})
-    };
+    const collections = cloneWorkspaceSecretCollections(workspaceSecrets);
 
     collections[collectionId] = { ...secrets };
 
@@ -155,13 +174,9 @@ export class SecretVariableService {
 
   async copyCollectionSecrets(workspaceId: string, sourceCollectionId: string, targetCollectionId: string): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const collections = {
-      ...(workspaceSecrets.collections || {})
-    };
+    const collections = cloneWorkspaceSecretCollections(workspaceSecrets);
 
-    collections[targetCollectionId] = {
-      ...(collections[sourceCollectionId] || {})
-    };
+    collections[targetCollectionId] = cloneSecretRecord(collections[sourceCollectionId]);
 
     await this.setWorkspaceSecrets(workspaceId, {
       ...workspaceSecrets,
@@ -171,9 +186,7 @@ export class SecretVariableService {
 
   async deleteCollectionSecrets(workspaceId: string, collectionId: string): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const collections = {
-      ...(workspaceSecrets.collections || {})
-    };
+    const collections = cloneWorkspaceSecretCollections(workspaceSecrets);
 
     delete collections[collectionId];
 
@@ -209,9 +222,7 @@ export class SecretVariableService {
     secrets: Record<string, SecretPrimitive>
   ): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const environments = {
-      ...(workspaceSecrets.environments || {})
-    };
+    const environments = cloneWorkspaceSecretEnvironments(workspaceSecrets);
 
     environments[environmentId] = { ...secrets };
 
@@ -230,13 +241,9 @@ export class SecretVariableService {
 
   async moveEnvironmentSecrets(workspaceId: string, oldEnvironmentId: string, newEnvironmentId: string): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const environments = {
-      ...(workspaceSecrets.environments || {})
-    };
+    const environments = cloneWorkspaceSecretEnvironments(workspaceSecrets);
 
-    environments[newEnvironmentId] = {
-      ...(environments[oldEnvironmentId] || {})
-    };
+    environments[newEnvironmentId] = cloneSecretRecord(environments[oldEnvironmentId]);
     delete environments[oldEnvironmentId];
 
     await this.setWorkspaceSecrets(workspaceId, {
@@ -247,13 +254,9 @@ export class SecretVariableService {
 
   async copyEnvironmentSecrets(workspaceId: string, sourceEnvironmentId: string, targetEnvironmentId: string): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const environments = {
-      ...(workspaceSecrets.environments || {})
-    };
+    const environments = cloneWorkspaceSecretEnvironments(workspaceSecrets);
 
-    environments[targetEnvironmentId] = {
-      ...(environments[sourceEnvironmentId] || {})
-    };
+    environments[targetEnvironmentId] = cloneSecretRecord(environments[sourceEnvironmentId]);
 
     await this.setWorkspaceSecrets(workspaceId, {
       ...workspaceSecrets,
@@ -263,9 +266,7 @@ export class SecretVariableService {
 
   async deleteEnvironmentSecrets(workspaceId: string, environmentId: string): Promise<void> {
     const workspaceSecrets = await this.getWorkspaceSecrets(workspaceId);
-    const environments = {
-      ...(workspaceSecrets.environments || {})
-    };
+    const environments = cloneWorkspaceSecretEnvironments(workspaceSecrets);
 
     delete environments[environmentId];
 

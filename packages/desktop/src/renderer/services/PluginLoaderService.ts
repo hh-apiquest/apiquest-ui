@@ -9,10 +9,20 @@ import type {
   ScriptIntellisenseContext,
   ScriptIntellisense,
   PluginInteractionRegistration,
+  IProtocolPluginUI,
+  IAuthPluginUI,
+  IImporterPluginUI,
 } from '@apiquest/plugin-ui-types';
 import { pluginManagerService } from './PluginManagerService';
 import { ScriptIntellisenseManager } from './ScriptIntellisenseManager';
 import { pluginInteractionService } from './PluginInteractionService';
+import type {
+  MonacoLoaderInstance,
+  MonacoThemeDefinition,
+  PluginMonacoEditorProps,
+  ProtocolPluginEventDefinition,
+  ProtocolPluginWithEvents,
+} from '../types/plugin-loader';
 
 /** Type guard: check if an unknown plugin object provides interaction registrations. */
 function hasInteractionRegistrations(
@@ -37,9 +47,44 @@ import {
 class DummyVariableResolverService implements VariableResolverService {
   resolve(text: string, variables: Record<string, string>): string {
     return text.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
-      return variables[varName] || match;
+      const resolvedValue = variables[String(varName)];
+      return resolvedValue !== undefined && resolvedValue !== '' ? resolvedValue : match;
     });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value !== '';
+}
+
+function isProtocolPlugin(plugin: unknown): plugin is IProtocolPluginUI {
+  return isRecord(plugin) && typeof plugin.setup === 'function' && typeof plugin.protocol === 'string';
+}
+
+function isAuthPlugin(plugin: unknown): plugin is IAuthPluginUI {
+  return isRecord(plugin) && typeof plugin.setup === 'function' && typeof plugin.type === 'string';
+}
+
+function isImporterPlugin(plugin: unknown): plugin is IImporterPluginUI {
+  return isRecord(plugin) && typeof plugin.setup === 'function' && typeof plugin.name === 'string';
+}
+
+function isProtocolPluginWithEvents(plugin: unknown): plugin is ProtocolPluginWithEvents {
+  if (!isRecord(plugin) || typeof plugin.setup !== 'function' || typeof plugin.protocol !== 'string') {
+    return false;
+  }
+
+  const pluginEvents = plugin.events;
+
+  if (pluginEvents === undefined) {
+    return true;
+  }
+
+  return Array.isArray(pluginEvents);
 }
 
 /**
@@ -54,20 +99,20 @@ class PluginLoaderService {
   private currentContext: ScriptIntellisenseContext | null = null;
   
   constructor() {
-    this.loadMonacoThemes();
+    void this.loadMonacoThemes();
   }
   
-  private async loadMonacoThemes() {
+  private async loadMonacoThemes(): Promise<void> {
     try {
-      const monaco = await loader.init();
-      monaco.editor.defineTheme('blackboard', BlackboardTheme as any);
+      const monaco = (await loader.init()) as unknown as MonacoLoaderInstance;
+      monaco.editor.defineTheme('blackboard', BlackboardTheme as MonacoThemeDefinition);
       this.isBlackboardThemeLoaded = true;
       console.log('[PluginLoader] Blackboard theme loaded');
     } catch (error) {
       console.error('[PluginLoader] Failed to load Monaco themes:', error);
     }
 
-    this.intellisenseManager.initialize().catch((error) => {
+    void this.intellisenseManager.initialize().catch((error: unknown) => {
       console.error('[PluginLoader] IntelliSense manager failed to initialize:', error);
     });
   }
@@ -77,11 +122,11 @@ class PluginLoaderService {
    * Also starts the PluginInteractionService so the portal can receive
    * host:interaction:request events from the main process.
    */
-  initialize(theme: 'light' | 'dark' = 'light') {
+  initialize(theme: 'light' | 'dark' = 'light'): void {
     this.currentTheme = theme;
     // Tier 3 — must be initialized before injectUIContext so any interactions
     // queued during plugin setup are handled correctly.
-    pluginInteractionService.initialize();
+    void pluginInteractionService.initialize();
     this.injectUIContext();
     console.log('[PluginLoader] Per-plugin UI contexts injected');
   }
@@ -92,10 +137,10 @@ class PluginLoaderService {
    * hostBundle. packageName must be the full npm package name (e.g. '@apiquest/plugin-soap-ui').
    */
   createUIContext(packageName: string): PluginUIContext {
-    const MonacoEditor = (props: any) => {
+    const MonacoEditor = (props: PluginMonacoEditorProps): React.ReactElement => {
       const { value, language, onChange, height, theme, readonly, ...otherProps } = props;
 
-      const effectiveTheme = theme || this.currentTheme;
+      const effectiveTheme = theme ?? this.currentTheme;
       const editorTheme = effectiveTheme === 'dark'
         ? (this.isBlackboardThemeLoaded ? 'blackboard' : 'vs-dark')
         : 'vs-light';
@@ -103,9 +148,11 @@ class PluginLoaderService {
       return React.createElement(Editor, {
         key: effectiveTheme,
         value,
-        language: language || 'javascript',
-        onChange,
-        height: height || '100%',
+        language: language ?? 'javascript',
+        onChange: (nextValue) => {
+          onChange(nextValue ?? '');
+        },
+        height: height ?? '100%',
         theme: editorTheme,
         options: {
           minimap: { enabled: false },
@@ -177,7 +224,7 @@ class PluginLoaderService {
    * Each plugin type uses its npm package name as the host bridge scope key.
    * After setup(), any Tier 3 interaction registrations are forwarded to PluginInteractionService.
    */
-  private injectUIContext() {
+  private injectUIContext(): void {
     // Protocol plugins — use getAllProtocolPluginEntries() for packageName
     pluginManagerService.getAllProtocolPluginEntries().forEach(({ packageName, plugin }) => {
       plugin.setup(this.createUIContext(packageName));
@@ -200,25 +247,37 @@ class PluginLoaderService {
     });
     
     // Listen for new plugins and auto-setup with scoped context
-    pluginManagerService.on('protocolPluginRegistered', (plugin: any) => {
+    pluginManagerService.on('protocolPluginRegistered', (plugin: unknown): void => {
+      if (!isProtocolPlugin(plugin)) {
+        return;
+      }
+
       const packageName = pluginManagerService.getPackageNameForProtocol(plugin.protocol) ?? plugin.protocol;
       plugin.setup(this.createUIContext(packageName));
-      this.maybeRegisterInteractions(String(packageName), plugin);
+      this.maybeRegisterInteractions(packageName, plugin);
       console.log(`[PluginLoader] Auto-setup protocol plugin: ${packageName}`);
     });
     
-    pluginManagerService.on('authPluginRegistered', (plugin: any) => {
+    pluginManagerService.on('authPluginRegistered', (plugin: unknown): void => {
+      if (!isAuthPlugin(plugin)) {
+        return;
+      }
+
       const packageName = pluginManagerService.getPackageNameForAuthType(plugin.type) ?? plugin.type;
       plugin.setup(this.createUIContext(packageName));
-      this.maybeRegisterInteractions(String(packageName), plugin);
+      this.maybeRegisterInteractions(packageName, plugin);
       console.log(`[PluginLoader] Auto-setup auth plugin: ${packageName}`);
     });
 
-    pluginManagerService.on('importerPluginRegistered', (plugin: any, packageName?: string) => {
+    pluginManagerService.on('importerPluginRegistered', (plugin: unknown, packageName?: string): void => {
+      if (!isImporterPlugin(plugin)) {
+        return;
+      }
+
       // importerPluginRegistered is emitted from registerImporterPlugin(packageName, plugin)
       // The packageName is available from the importer entries map
       const allEntries = pluginManagerService.getAllImporterPluginEntries();
-      const entry = allEntries.find(e => e.plugin === plugin);
+      const entry = allEntries.find((pluginEntry) => pluginEntry.plugin === plugin);
       const resolvedPackageName = entry?.packageName ?? packageName ?? 'unknown';
       plugin.setup(this.createUIContext(resolvedPackageName));
       this.maybeRegisterInteractions(resolvedPackageName, plugin);
@@ -226,7 +285,7 @@ class PluginLoaderService {
     });
 
     // After a full plugin reload, re-apply the current IntelliSense context
-    pluginManagerService.on('pluginsReloaded', () => {
+    pluginManagerService.on('pluginsReloaded', (): void => {
       if (this.currentContext !== null) {
         console.log('[PluginLoader] Plugins reloaded — refreshing IntelliSense context');
         this.setActiveScriptIntellisenseContext(this.currentContext);
@@ -250,7 +309,9 @@ class PluginLoaderService {
         const pluginContributions = protocolPlugin.getScriptIntellisense?.(context) ?? [];
         contributions.push(...pluginContributions);
 
-        const pluginEvents = (protocolPlugin as any).events as Array<{ name: string; canHaveTests?: boolean }> | undefined;
+        const pluginEvents: ProtocolPluginEventDefinition[] | undefined = isProtocolPluginWithEvents(protocolPlugin)
+          ? protocolPlugin.events
+          : undefined;
         protocolHasTestableEvents = Array.isArray(pluginEvents)
           ? pluginEvents.some((eventDef) => eventDef?.canHaveTests === true)
           : false;
@@ -280,9 +341,9 @@ class PluginLoaderService {
    * dispatch time, which is acceptable for generic desktop rendering callers).
    */
   getUIContext(protocol?: string): PluginUIContext {
-    if (protocol) {
+    if (isNonEmptyString(protocol)) {
       const packageName = pluginManagerService.getPackageNameForProtocol(protocol);
-      if (packageName) {
+      if (isNonEmptyString(packageName)) {
         return this.createUIContext(packageName);
       }
     }
@@ -294,33 +355,36 @@ class PluginLoaderService {
    * Existing plugin contexts that captured theme at setup time will not auto-update;
    * a plugin reload is needed for theme-sensitive plugin UI to pick up the change.
    */
-  setTheme(theme: 'light' | 'dark') {
-    if (this.currentTheme === theme) return;
+  setTheme(theme: 'light' | 'dark'): void {
+    if (this.currentTheme === theme) {
+      return;
+    }
+
     console.log(`[PluginLoader] Theme updated: ${this.currentTheme} -> ${theme}`);
     this.currentTheme = theme;
   }
   
   // Plugin queries delegate to PluginManagerService
-  getProtocolPluginUI(protocol: string) {
+  getProtocolPluginUI(protocol: string): IProtocolPluginUI | undefined {
     return pluginManagerService.getProtocolPlugin(protocol);
   }
   
-  getAuthPluginUI(type: string) {
+  getAuthPluginUI(type: string): IAuthPluginUI | undefined {
     return pluginManagerService.getAuthPlugin(type);
   }
   
-  getAllProtocolPluginUIs() {
+  getAllProtocolPluginUIs(): IProtocolPluginUI[] {
     return pluginManagerService.getAllProtocolPlugins();
   }
   
-  getAllAuthPluginUIs() {
+  getAllAuthPluginUIs(): IAuthPluginUI[] {
     return pluginManagerService.getAllAuthPlugins();
   }
   
-  getAuthPluginUIsForProtocol(protocol: string) {
+  getAuthPluginUIsForProtocol(protocol: string): IAuthPluginUI[] {
     const supportedAuthTypes = pluginManagerService.getSupportedAuthTypesForProtocol(protocol);
     return pluginManagerService.getAllAuthPlugins().filter(
-      auth => supportedAuthTypes.includes(auth.type)
+      (authPlugin) => supportedAuthTypes.includes(authPlugin.type)
     );
   }
   

@@ -1,6 +1,7 @@
 // Session IPC handlers
 import { ipcMain } from 'electron';
-import { sessionService, type WorkspaceSession } from '../SessionService.js';
+import { sessionService } from '../SessionService.js';
+import type { WorkspaceSession } from '../types/session.js';
 import { workspaceRegistry } from './workspace.js';
 
 export function registerSessionHandlers(): void {

@@ -47,7 +47,7 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
   private entriesByKey = new Map<string, NetworkEntry>();
 
   private makeEntryKey(executionId: string, requestId?: string): string {
-    return requestId ? `${executionId}:${requestId}` : executionId;
+    return requestId !== undefined && requestId !== '' ? `${executionId}:${requestId}` : executionId;
   }
 
   connectToExecutionStream(subscribe: (callback: (event: ExecutionEvent) => void) => () => void): () => void {
@@ -94,16 +94,16 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
 
     // Protocol comes from event.data.protocol (passed by RunnerService), not request.protocol
     // Request interface doesn't have protocol field - it's inherited from collection
-    const protocol = event.data?.protocol;
+    const protocol = typeof event.data?.protocol === 'string' ? event.data.protocol : undefined;
 
     const entry: NetworkEntry = {
       id: `net-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       executionId: event.executionId,
       requestId: request.id,
       requestName: request.name,
-      path: event.data?.path,
+      path: typeof event.data?.path === 'string' ? event.data.path : undefined,
       protocol,
-      startTime: event.timestamp || Date.now(),
+      startTime: event.timestamp,
       request
     };
 
@@ -121,24 +121,24 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
 
   private handleAfterRequest(event: ExecutionEvent): void {
     const entry = this.getOrCreateEntry(event);
-    if (!entry) return;
+    if (entry === null) return;
 
     const requestData = event.data?.request;
     const request = isRequest(requestData) ? requestData : undefined;
     const response = event.data?.response;
     
     // Use plugin presenter to extract response summary
-    const protocol = event.data?.protocol;
-    const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-    const summaryView = request ? buildSummary(request, response, plugin) : null;
+    const protocol = typeof event.data?.protocol === 'string' ? event.data.protocol : undefined;
+    const plugin = protocol !== undefined ? pluginLoader.getProtocolPluginUI(protocol) : null;
+    const summaryView = request !== undefined ? buildSummary(request, response, plugin) : null;
     
     entry.response = response;
     entry.responseSummary = summaryView;
-    entry.endTime = event.timestamp || Date.now();
-    if (!entry.requestName && request) {
+    entry.endTime = event.timestamp;
+    if (entry.requestName === undefined && request !== undefined) {
       entry.requestName = request.name;
     }
-    if (!entry.requestId && request) {
+    if (entry.requestId === undefined && request !== undefined) {
       entry.requestId = request.id;
     }
 
@@ -147,13 +147,13 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
 
   private handleRequestCompleted(event: ExecutionEvent): void {
     const entry = this.getOrCreateEntry(event);
-    if (!entry) return;
+    if (entry === null) return;
 
     const result = event.data;
-    if (result?.response) {
+    if (result?.response !== undefined) {
       entry.response = result.response;
     }
-    if (entry.request) {
+    if (entry.request !== undefined) {
       const summaryView = buildSummary(entry.request, entry.response);
       entry.responseSummary = summaryView;
     }
@@ -163,34 +163,30 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
     if (typeof result?.requestName === 'string') {
       entry.requestName = result.requestName;
     }
-    if (!entry.endTime) {
-      entry.endTime = event.timestamp || Date.now();
-    }
+    entry.endTime ??= event.timestamp;
 
     this.emit('updated', this.getEntries());
   }
 
   private handleException(event: ExecutionEvent): void {
     const entry = this.getOrCreateEntry(event);
-    if (!entry) return;
+    if (entry === null) return;
 
     const error = event.data?.error;
     entry.error = getErrorMessage(error);
-    entry.endTime = event.timestamp || Date.now();
+    entry.endTime = event.timestamp;
 
     this.emit('updated', this.getEntries());
   }
 
   private handleCustomEvent(event: ExecutionEvent): void {
-    if (!event.type) return;
+    if (event.type === '') return;
     if (!event.type.includes(':')) return;
 
     const entry = this.getOrCreateEntry(event);
-    if (!entry) return;
+    if (entry === null) return;
 
-    if (!entry.customEvents) {
-      entry.customEvents = [];
-    }
+    entry.customEvents ??= [];
     entry.customEvents.push(event);
 
     const payload = JSON.stringify({ type: event.type, data: event.data }, null, 2);
@@ -208,8 +204,8 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
 
     const nextEvents = [...existingEvents, payload];
     entry.response.data = { events: nextEvents };
-    entry.responseSummary = entry.request ? buildSummary(entry.request, entry.response, null) : null;
-    entry.endTime = event.timestamp || Date.now();
+    entry.responseSummary = entry.request !== undefined ? buildSummary(entry.request, entry.response, null) : null;
+    entry.endTime = event.timestamp;
 
     this.emit('updated', this.getEntries());
   }
@@ -222,20 +218,20 @@ export class NetworkService extends EventEmitter<NetworkServiceEvents> {
     const entryKey = this.makeEntryKey(event.executionId, requestId);
     
     const existing = this.entriesByKey.get(entryKey);
-    if (existing) return existing;
+    if (existing !== undefined) return existing;
 
     // Try fallback with just executionId (for single request executions)
-    if (requestId) {
+    if (requestId !== undefined && requestId !== '') {
       const fallbackKey = event.executionId;
       const fallbackEntry = this.entriesByKey.get(fallbackKey);
-      if (fallbackEntry) return fallbackEntry;
+      if (fallbackEntry !== undefined) return fallbackEntry;
     }
 
     // No existing entry found - create new one (shouldn't happen if beforeRequest fired)
     const entry: NetworkEntry = {
       id: `net-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       executionId: event.executionId,
-      startTime: event.timestamp || Date.now()
+      startTime: event.timestamp
     };
 
     this.state.entries.unshift(entry);

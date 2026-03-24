@@ -1,185 +1,174 @@
 // RunnerTab - Collection runner with configuration and request selection (config-only)
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type JSX } from 'react';
 import { RunnerConfig } from './RunnerConfig';
 import { RequestList } from './RequestList';
 import { useTabNavigation, useWorkspace } from '../../../contexts';
-import type { RunConfig } from '../../../types/quest';
+import type {
+  RunConfig,
+  RunnerCollectionItem,
+  RunnerCollectionUpdate,
+  RunnerTabConfig,
+  RunnerTabProps,
+} from '../../../types/runner-tab';
 
-interface RunnerTabProps {
-  collection: any;
-  onChange: (collection: any) => void;
-  workspace: any;
-  onRun?: (payload: {
-    collectionId: string;
-    collectionName: string;
-    protocol: string;
-    selectedRequests: string[];
-    config: RunConfig;
-  }) => void;
+function isNonEmptyArray<T>(value: T[] | undefined): value is T[] {
+  return Array.isArray(value) && value.length > 0;
 }
 
-export type RunnerTabConfig = {
-  environmentId?: string;
-  iterations: number;
-  delay: number;
-  parallel: boolean;
-  concurrency: number;
-  allowParallel: boolean;
-  maxConcurrency?: number;
-  dataFile?: File | null;
-  persistVariables: boolean;
-  saveResponses: boolean;
-};
-
-// Runner state stored in collection._runnerState so it survives tab switches.
-export interface RunnerState {
-  selectedRequests: string[];
-  config: Omit<RunnerTabConfig, 'dataFile'>; // File cannot be serialized; omit from persisted state
+function isRequestItem(item: RunnerCollectionItem): boolean {
+  return item.type === 'request';
 }
 
-// Helper to get all request IDs from collection
-function getAllRequestIds(items: any[]): string[] {
+function getAllRequestIds(items: RunnerCollectionItem[]): string[] {
   const ids: string[] = [];
+
   for (const item of items) {
-    if (item.type === 'folder' && item.items) {
+    if (item.type === 'folder' && isNonEmptyArray(item.items)) {
       ids.push(...getAllRequestIds(item.items));
-    } else if (item.type === 'request' || item.data) {
+      continue;
+    }
+
+    if (isRequestItem(item) && item.id !== '') {
       ids.push(item.id);
     }
   }
+
   return ids;
 }
 
-export function RunnerTab({ collection, onChange, workspace, onRun }: RunnerTabProps) {
+export function RunnerTab({ collection, onChange, workspace, onRun }: RunnerTabProps): JSX.Element {
   const { openRunnerExecution } = useTabNavigation();
   const { activeEnvironment } = useWorkspace();
 
-  // Restore persisted runner state from collection._runnerState (set by a previous tab switch).
-  const persistedState = collection?._runnerState as RunnerState | undefined;
-
+  const persistedState = collection._runnerState;
   const [selectedRequests, setSelectedRequests] = useState<string[]>([]);
-  
-  // Initialize with all requests selected (or restored from persisted state).
-  useEffect(() => {
-    if (collection?.items) {
+
+  useEffect((): void => {
+    if (collection.items !== undefined) {
       const allIds = getAllRequestIds(collection.items);
       const initialSelection = persistedState?.selectedRequests ?? allIds;
       setSelectedRequests(initialSelection);
     }
-  }, [collection?.id]); // Re-init only when the collection identity changes
+  }, [collection.info.id, collection.items, persistedState?.selectedRequests]);
 
-  // Check if parallel execution is allowed in collection
-  const allowParallel = collection?.options?.execution?.allowParallel === true;
-  const maxConcurrency = collection?.options?.execution?.maxConcurrency;
+  const allowParallel = collection.options?.execution?.allowParallel === true;
+  const maxConcurrency = collection.options?.execution?.maxConcurrency;
 
   const [runConfig, setRunConfig] = useState<RunnerTabConfig>({
-    environmentId: persistedState?.config.environmentId ?? (activeEnvironment?.id ?? undefined),
+    environmentId: persistedState?.config.environmentId ?? activeEnvironment?.id ?? undefined,
     iterations: persistedState?.config.iterations ?? 1,
     delay: persistedState?.config.delay ?? 0,
     parallel: persistedState?.config.parallel ?? false,
     concurrency: persistedState?.config.concurrency ?? 1,
-    allowParallel: allowParallel,
-    maxConcurrency: maxConcurrency,
+    allowParallel,
+    maxConcurrency,
     dataFile: null,
     persistVariables: persistedState?.config.persistVariables ?? false,
-    saveResponses: persistedState?.config.saveResponses ?? false
+    saveResponses: persistedState?.config.saveResponses ?? false,
   });
 
-  // Keep stable refs so the bubble-up effects always read the latest values.
   const selectedRequestsRef = useRef(selectedRequests);
   const runConfigRef = useRef(runConfig);
-  useEffect(() => { selectedRequestsRef.current = selectedRequests; }, [selectedRequests]);
-  useEffect(() => { runConfigRef.current = runConfig; }, [runConfig]);
 
-  // Bubble runner state up to CollectionEditor via onChange so it is stored in
-  // collection._runnerState and preserved by setTabEditorState on every change.
-  const bubbleRunnerState = (nextSelected: string[], nextConfig: RunnerTabConfig) => {
+  useEffect((): void => {
+    selectedRequestsRef.current = selectedRequests;
+  }, [selectedRequests]);
+
+  useEffect((): void => {
+    runConfigRef.current = runConfig;
+  }, [runConfig]);
+
+  const bubbleRunnerState = (nextSelected: string[], nextConfig: RunnerTabConfig): void => {
     const { dataFile: _omit, ...serializableConfig } = nextConfig;
-    onChange({
+
+    const updatedCollection: RunnerCollectionUpdate = {
       ...collection,
       _runnerState: {
         selectedRequests: nextSelected,
-        config: serializableConfig
-      }
-    });
+        config: serializableConfig,
+      },
+    };
+
+    onChange(updatedCollection);
   };
 
-  useEffect(() => {
-    setRunConfig(prev => ({
+  useEffect((): void => {
+    setRunConfig((prev: RunnerTabConfig) => ({
       ...prev,
       allowParallel,
-      maxConcurrency
+      maxConcurrency,
     }));
   }, [allowParallel, maxConcurrency]);
-  
-  // Update environmentId when activeEnvironment changes
-  useEffect(() => {
-    setRunConfig(prev => ({
+
+  useEffect((): void => {
+    setRunConfig((prev: RunnerTabConfig) => ({
       ...prev,
-      environmentId: activeEnvironment?.id ?? undefined
+      environmentId: activeEnvironment?.id ?? undefined,
     }));
   }, [activeEnvironment?.id]);
 
-  const handleSelectionChange = (nextSelected: string[]) => {
+  const handleSelectionChange = (nextSelected: string[]): void => {
     setSelectedRequests(nextSelected);
     bubbleRunnerState(nextSelected, runConfigRef.current);
   };
 
-  const handleConfigChange = (nextConfig: RunnerTabConfig) => {
+  const handleConfigChange = (nextConfig: RunnerTabConfig): void => {
     setRunConfig(nextConfig);
     bubbleRunnerState(selectedRequestsRef.current, nextConfig);
   };
 
-  const handleRunCollection = () => {
-    if (!workspace || !collection) return;
-    
-    // Collection uses info.id and info.name per schema
-    const collectionId = collection.info?.id || collection.id;
-    const collectionName = collection.info?.name || collection.name;
-    
-    console.log('Opening runner execution tab:', {
-      collectionId,
-      collectionName,
-      selectedRequests,
-      config: runConfig
-    });
-    
+  const handleRunCollection = (): void => {
+    if (workspace === null) {
+      return;
+    }
+
+    const collectionId = collection.info.id;
+    const collectionName = collection.info.name;
+
+    if (collectionId === '' || collectionName === '') {
+      return;
+    }
+
     const executionConfig: RunConfig = {
-      iterations: runConfig.iterations || 1,
+      iterations: runConfig.iterations > 0 ? runConfig.iterations : 1,
       delay: runConfig.delay,
       environmentId: runConfig.environmentId,
       parallel: runConfig.parallel,
       concurrency: runConfig.concurrency,
       persistVariables: runConfig.persistVariables,
-      saveResponses: runConfig.saveResponses
+      saveResponses: runConfig.saveResponses,
     };
 
-    if (onRun) {
+    console.log('Opening runner execution tab:', {
+      collectionId,
+      collectionName,
+      selectedRequests,
+      config: executionConfig,
+    });
+
+    if (onRun !== undefined) {
       onRun({
         collectionId,
         collectionName,
-        protocol: collection.protocol || 'http',
+        protocol: collection.protocol ?? 'http',
         selectedRequests,
-        config: executionConfig
+        config: executionConfig,
       });
       return;
     }
 
-    // Open a new runner execution tab
     openRunnerExecution(
       collectionId,
-      collection.protocol || 'http',
+      collection.protocol ?? 'http',
       collectionName,
       executionConfig,
-      selectedRequests
+      selectedRequests,
     );
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
-      {/* Request Selection (Left) + Configuration (Right) */}
       <div style={{ display: 'flex', gap: '16px', minHeight: 0, flex: '1' }}>
-        {/* Left Panel: Request Selection */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <RequestList
             collection={collection}
@@ -189,14 +178,9 @@ export function RunnerTab({ collection, onChange, workspace, onRun }: RunnerTabP
           />
         </div>
 
-        {/* Right Panel: Configuration and Run Controls */}
         <div style={{ width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <RunnerConfig
-            config={runConfig}
-            onChange={handleConfigChange}
-          />
-          
-          {/* Run Controls */}
+          <RunnerConfig config={runConfig} onChange={handleConfigChange} />
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <button
               onClick={handleRunCollection}
@@ -210,16 +194,16 @@ export function RunnerTab({ collection, onChange, workspace, onRun }: RunnerTabP
                 cursor: selectedRequests.length === 0 ? 'not-allowed' : 'pointer',
                 backgroundColor: selectedRequests.length === 0 ? 'var(--gray-6)' : 'var(--accent-9)',
                 color: 'white',
-                transition: 'background-color 0.2s'
+                transition: 'background-color 0.2s',
               }}
-              onMouseEnter={(e) => {
+              onMouseEnter={(event): void => {
                 if (selectedRequests.length > 0) {
-                  e.currentTarget.style.backgroundColor = 'var(--accent-10)';
+                  event.currentTarget.style.backgroundColor = 'var(--accent-10)';
                 }
               }}
-              onMouseLeave={(e) => {
+              onMouseLeave={(event): void => {
                 if (selectedRequests.length > 0) {
-                  e.currentTarget.style.backgroundColor = 'var(--accent-9)';
+                  event.currentTarget.style.backgroundColor = 'var(--accent-9)';
                 }
               }}
             >

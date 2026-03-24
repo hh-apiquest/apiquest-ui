@@ -2,30 +2,29 @@
 import { app } from 'electron';
 import { promises as fs } from 'fs';
 import path from 'path';
+import type { SessionsData, WorkspaceSession } from './types/session.js';
 
-export type TabSession = {
-  id: string;
-  collectionId: string;
-  collectionPath: string;
-  requestId: string;
-  protocol: string;
-  unsavedChanges?: {
-    name?: string;
-    description?: string;
-    data?: any; // Protocol-specific data
+function createEmptyWorkspaceSession(): WorkspaceSession {
+  return {
+    lastAccessed: new Date().toISOString(),
+    tabs: {
+      openTabs: [],
+      activeTabId: null,
+    },
+    sidebar: {
+      expandedFolders: {},
+    },
+    resources: {},
   };
-};
+}
 
-export type WorkspaceSession = {
-  lastAccessed: string;
-  openTabs: TabSession[];
-  activeTabId: string | null;
-  expandedFolders: Record<string, string[]>; // collectionId -> folder IDs
-};
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
-export type SessionsData = {
-  sessions: Record<string, WorkspaceSession>; // workspace path -> session
-};
+function isSessionsData(value: unknown): value is SessionsData {
+  return isObjectRecord(value) && 'sessions' in value && isObjectRecord(value.sessions);
+}
 
 export class SessionService {
   private appDataPath: string;
@@ -53,14 +52,15 @@ export class SessionService {
    * Load all sessions
    */
   private async loadSessions(): Promise<SessionsData> {
-    if (this.sessionsCache) {
+    if (this.sessionsCache !== null) {
       return this.sessionsCache;
     }
 
     try {
       const content = await fs.readFile(this.sessionsFilePath, 'utf-8');
-      this.sessionsCache = JSON.parse(content);
-      return this.sessionsCache!;
+      const parsed: unknown = JSON.parse(content);
+      this.sessionsCache = isSessionsData(parsed) ? parsed : { sessions: {} };
+      return this.sessionsCache;
     } catch (error) {
       console.error('Failed to load sessions.json:', error);
       // Return empty sessions on error
@@ -89,7 +89,7 @@ export class SessionService {
    */
   async getSession(workspacePath: string): Promise<WorkspaceSession | null> {
     const data = await this.loadSessions();
-    return data.sessions[workspacePath] || null;
+    return data.sessions[workspacePath] ?? null;
   }
 
   /**
@@ -109,12 +109,7 @@ export class SessionService {
    */
   async updateSession(workspacePath: string, updates: Partial<WorkspaceSession>): Promise<void> {
     const data = await this.loadSessions();
-    const existing = data.sessions[workspacePath] || {
-      lastAccessed: new Date().toISOString(),
-      openTabs: [],
-      activeTabId: null,
-      expandedFolders: {}
-    };
+    const existing = data.sessions[workspacePath] ?? createEmptyWorkspaceSession();
 
     data.sessions[workspacePath] = {
       ...existing,

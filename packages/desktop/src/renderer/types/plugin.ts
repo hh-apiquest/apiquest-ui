@@ -3,6 +3,7 @@
 // Desktop uses fracture for execution but has its own UI plugin system
 
 import { ApiquestMetadata } from '@apiquest/plugin-ui-types';
+import type { Auth } from '@apiquest/types';
 import React from 'react';
 
 /**
@@ -13,11 +14,8 @@ export interface RequestData {
   id: string;
   name: string;
   protocol: string;
-  data: any;  // Protocol-specific data
-  auth?: {
-    type: string;
-    data?: any;
-  };
+  data: Record<string, unknown>;
+  auth?: Auth;
 }
 
 export interface ResponseData {

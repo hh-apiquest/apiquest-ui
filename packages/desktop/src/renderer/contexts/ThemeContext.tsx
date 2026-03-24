@@ -17,18 +17,18 @@ interface ThemeProviderProps {
   children: ReactNode;
 }
 
-export function ThemeProvider({ children }: ThemeProviderProps) {
+export function ThemeProvider({ children }: ThemeProviderProps): React.JSX.Element {
   const [theme, setThemeState] = useState<Theme>('system');
   const [actualTheme, setActualTheme] = useState<'light' | 'dark'>('light');
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Load saved theme on mount
   useEffect(() => {
-    const loadTheme = async () => {
+    const loadTheme = async (): Promise<void> => {
       try {
-        const savedTheme = await window.quest.settings.get('ui.theme');
-        if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme as string)) {
-          setThemeState(savedTheme as Theme);
+        const savedTheme = await window.quest.settings.getTheme();
+        if (savedTheme !== undefined) {
+          setThemeState(savedTheme);
         }
       } catch (error) {
         console.error('Failed to load theme from settings:', error);
@@ -36,12 +36,14 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         setIsInitialized(true);
       }
     };
-    loadTheme();
+    void loadTheme();
   }, []);
 
   // Listen to system theme changes
   useEffect(() => {
-    if (!isInitialized) return;
+    if (!isInitialized) {
+      return;
+    }
 
     if (theme !== 'system') {
       setActualTheme(theme);
@@ -50,7 +52,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
     // Check system preference
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList): void => {
       setActualTheme(e.matches ? 'dark' : 'light');
     };
 
@@ -64,7 +66,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   // Apply theme to document and Monaco Editor
   useEffect(() => {
-    if (!isInitialized) return;
+    if (!isInitialized) {
+      return;
+    }
     
     document.documentElement.setAttribute('data-theme', actualTheme);
     document.documentElement.classList.toggle('dark', actualTheme === 'dark');
@@ -74,25 +78,25 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   }, [actualTheme, isInitialized]);
 
   // Persist theme preference to settings
-  const setTheme = async (newTheme: Theme) => {
+  const setTheme = async (newTheme: Theme): Promise<void> => {
     setThemeState(newTheme);
     try {
-      await window.quest.settings.set('ui.theme', newTheme);
+      await window.quest.settings.setTheme(newTheme);
     } catch (error) {
       console.error('Failed to save theme to settings:', error);
     }
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, actualTheme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, actualTheme, setTheme: (nextTheme) => { void setTheme(nextTheme); } }}>
       {children}
     </ThemeContext.Provider>
   );
 }
 
-export function useTheme() {
+export function useTheme(): ThemeContextValue {
   const context = useContext(ThemeContext);
-  if (!context) {
+  if (context === null) {
     throw new Error('useTheme must be used within ThemeProvider');
   }
   return context;

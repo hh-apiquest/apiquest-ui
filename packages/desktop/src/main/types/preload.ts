@@ -1,6 +1,6 @@
 import type { Collection, Environment, VariableValue } from '@apiquest/types';
 import type { ApiquestMetadata } from '@apiquest/plugin-ui-types';
-import type { AppSettings } from '../SettingsService.js';
+import type { AppSettings, ThemeSetting, WorkspaceSecrets } from '../SettingsService.js';
 import type { AICompletionRequest, AICompletionResponse } from './ai.js';
 import type { QuestHostApi } from './host.js';
 import type { MarketplacePlugin, ScannedPlugin } from './plugins.js';
@@ -13,6 +13,7 @@ import type {
   WorkspaceWithMetadata,
 } from './workspace.js';
 import type { ExecutionEvent, RunRequestParams, RunRequestResult } from '../../types/execution.js';
+import type { WorkspaceSession } from './session.js';
 
 export interface QuestApi {
   workspace: {
@@ -57,14 +58,16 @@ export interface QuestApi {
   };
   settings: {
     getAll(): Promise<AppSettings>;
-    get(path: string): Promise<unknown>;
-    update(partial: AppSettings): Promise<AppSettings>;
-    set(path: string, value: unknown): Promise<AppSettings>;
+    update(partial: Partial<AppSettings>): Promise<AppSettings>;
+    getTheme(): Promise<ThemeSetting | undefined>;
+    setTheme(theme: ThemeSetting): Promise<AppSettings>;
+    getWorkspaceSecrets(workspaceId: string): Promise<WorkspaceSecrets | undefined>;
+    setWorkspaceSecrets(workspaceId: string, secrets: WorkspaceSecrets): Promise<AppSettings>;
   };
   session: {
-    get(workspaceId: string): Promise<unknown>;
-    save(workspaceId: string, session: unknown): Promise<void>;
-    update(workspaceId: string, updates: unknown): Promise<void>;
+    get(workspaceId: string): Promise<WorkspaceSession | null>;
+    save(workspaceId: string, session: WorkspaceSession): Promise<void>;
+    update(workspaceId: string, updates: Partial<WorkspaceSession>): Promise<void>;
   };
   window: {
     minimize(): Promise<void>;
