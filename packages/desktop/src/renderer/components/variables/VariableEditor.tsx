@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from 'react';
 import type { CSSProperties } from 'react';
 import type { Variable, VariablePrimitive, VariableValue } from '@apiquest/types';
 import { pluginManagerService } from '../../services';
+import type { VaultPluginInfo } from '../../types/plugin-manager';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Select from '@radix-ui/react-select';
@@ -37,7 +38,7 @@ type AppRegionStyle = CSSProperties & {
 
 function getThemePortalContainer(): HTMLElement | undefined {
   if (typeof document === 'undefined') return undefined;
-  return (document.querySelector('.radix-themes') as HTMLElement | null) ?? document.body;
+  return document.querySelector<HTMLElement>('.radix-themes') ?? document.body;
 }
 
 function coerceValueToType(value: VariablePrimitive, type: Variable['type'] | undefined): VariablePrimitive {
@@ -71,7 +72,7 @@ export function VariableEditor({
   rows,
   onRowsChange,
   showEnabled = true,
-}: VariableEditorProps) {
+}: VariableEditorProps): JSX.Element {
   const [editingId, setEditingId] = useState<number | null>(null);
   const vaultPlugins = pluginManagerService.getAllVaultPlugins();
 
@@ -87,32 +88,33 @@ export function VariableEditor({
     })
   );
 
-  const addVariable = () => {
-    const newRows = [...rows, { 
+  const addVariable = (): void => {
+    const newRow: VariableRow = {
       key: '', 
       value: '',
       type: 'string',
       enabled: true 
-    } as VariableRow];
+    };
+    const newRows = [...rows, newRow];
     onRowsChange(newRows);
     setEditingId(rows.length);
   };
 
-  const updateVariable = (index: number, updates: Partial<VariableRow>) => {
+  const updateVariable = (index: number, updates: Partial<VariableRow>): void => {
     const newRows = [...rows];
     newRows[index] = { ...newRows[index], ...updates };
     onRowsChange(newRows);
   };
 
-  const deleteVariable = (index: number) => {
+  const deleteVariable = (index: number): void => {
     const newRows = rows.filter((_, i) => i !== index);
     onRowsChange(newRows);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = (event: DragEndEvent): void => {
     const { active, over } = event;
     
-    if (over && active.id !== over.id) {
+    if (over !== null && active.id !== over.id) {
       const oldIndex = Number(active.id);
       const newIndex = Number(over.id);
       const newRows = arrayMove(rows, oldIndex, newIndex);
@@ -234,7 +236,7 @@ interface SortableVariableRowProps {
   variable: VariableRow;
   index: number;
   isEditing: boolean;
-  vaultPlugins: any[];
+  vaultPlugins: VaultPluginInfo[];
   showEnabled: boolean;
   onUpdate: (updates: Partial<VariableRow>) => void;
   onDelete: () => void;
@@ -242,7 +244,7 @@ interface SortableVariableRowProps {
   onStopEdit: () => void;
 }
 
-function SortableVariableRow(props: SortableVariableRowProps) {
+function SortableVariableRow(props: SortableVariableRowProps): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.id });
   
   const style = {
@@ -281,7 +283,7 @@ interface VariableRowProps {
   variable: VariableRow;
   index: number;
   isEditing: boolean;
-  vaultPlugins: any[];
+  vaultPlugins: VaultPluginInfo[];
   showEnabled: boolean;
   onUpdate: (updates: Partial<VariableRow>) => void;
   onDelete: () => void;
@@ -298,20 +300,21 @@ function VariableRowContent({
   onDelete,
   onEdit,
   onStopEdit
-}: VariableRowProps) {
+}: VariableRowProps): JSX.Element {
   const portalContainer = getThemePortalContainer();
+  const isSecret = variable.isSecret === true;
 
   // Get available providers: default + vault plugins
   const providers = [
     { value: undefined, label: 'None' },
     { value: 'env', label: 'Environment Variable' },
-    ...vaultPlugins.map((plugin: any) => ({
+    ...vaultPlugins.map((plugin) => ({
       value: `vault:${plugin.name}`,
       label: `${plugin.icon} ${plugin.name}`
     }))
   ];
 
-  const setType = (nextType: Variable['type']) => {
+  const setType = (nextType: Variable['type']): void => {
     onUpdate({
       type: nextType,
       value: coerceValueToType(variable.value, nextType),
@@ -356,15 +359,15 @@ function VariableRowContent({
           />
           <div className="absolute right-0 inline-flex items-center" style={{ gap: '2px' }}>
             <button
-              onClick={() => onUpdate({ isSecret: !variable.isSecret })}
+              onClick={() => onUpdate({ isSecret: !isSecret })}
               className="bg-transparent border-none cursor-pointer"
               style={{
                 paddingLeft: '4px',
                 paddingRight: '0px',
-                color: variable.isSecret ? 'var(--accent-9)' : 'var(--gray-8)',
+                color: isSecret ? 'var(--accent-9)' : 'var(--gray-8)',
                 WebkitAppRegion: 'no-drag'
               } as AppRegionStyle}
-              title={variable.isSecret ? 'Secret variable (click to unset)' : 'Mark as secret'}
+              title={isSecret ? 'Secret variable (click to unset)' : 'Mark as secret'}
             >
               <KeyIcon className="w-3.5 h-3.5" />
             </button>
@@ -423,7 +426,7 @@ function VariableRowContent({
                   </DropdownMenu.Label>
                   {providers.map((provider) => (
                     <DropdownMenu.Item
-                      key={provider.value || 'none'}
+                       key={provider.value ?? 'none'}
                       className="ve-menu-item flex items-center justify-between px-2 py-1 text-xs cursor-pointer"
                       style={{ WebkitAppRegion: 'no-drag' } as AppRegionStyle}
                       onClick={() => onUpdate({ provider: provider.value })}
@@ -501,7 +504,7 @@ function VariableRowContent({
         ) : (
           <TextField.Root
             size="1"
-            type={variable.isSecret ? 'password' : variable.type === 'number' ? 'number' : 'text'}
+            type={isSecret ? 'password' : variable.type === 'number' ? 'number' : 'text'}
             value={
               variable.type === 'number'
                 ? (typeof variable.value === 'number' ? variable.value : Number(coerceValueToType(variable.value, 'number')))
@@ -554,7 +557,7 @@ export function VariableEditorDialog({
   variables,
   onSave,
   showEnabled
-}: VariableEditorDialogProps) {
+}: VariableEditorDialogProps): JSX.Element {
   const portalContainer = getThemePortalContainer();
 
   // Internal state: maintain rows while editing (NOT synced to parent until Save)
@@ -565,7 +568,7 @@ export function VariableEditorDialog({
     if (open) {
       const initialRows = Object.entries(variables).map(([key, val]) => {
         const variable: Variable = (typeof val === 'object' && val !== null && 'value' in val)
-          ? (val as Variable)
+          ? val
           : { value: val as VariablePrimitive };
         return { ...variable, key };
       });
@@ -589,14 +592,16 @@ export function VariableEditorDialog({
 
   const isValid = validationErrors.length === 0;
 
-  const handleSave = () => {
-    if (!isValid) return;
+  const handleSave = (): void => {
+    if (!isValid) {
+      return;
+    }
     
     // Filter empty keys and convert to Record format
     const record: Record<string, VariableValue> = {};
     for (const row of rows) {
       const { key, ...varData } = row;
-      if (key.trim()) {  // Only include non-empty keys
+      if (key.trim() !== '') {  // Only include non-empty keys
         // If only value exists, store primitive; otherwise as Variable object
         if (Object.keys(varData).length === 1 && varData.value !== undefined) {
           record[key] = varData.value;

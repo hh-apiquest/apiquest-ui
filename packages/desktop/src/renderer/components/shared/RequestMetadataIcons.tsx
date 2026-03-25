@@ -2,16 +2,19 @@
 import { Square3Stack3DIcon, BoltIcon } from '@heroicons/react/24/outline';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CollectionItem } from '@apiquest/types';
+import type { JSX } from 'react';
 
 interface RequestMetadataIconsProps {
   resource: CollectionItem;
 }
 
-export function RequestMetadataIcons({ resource }: RequestMetadataIconsProps) {
-  const hasDependsOn = resource.dependsOn && resource.dependsOn.length > 0;
-  const hasCondition = !!resource.condition;
+export function RequestMetadataIcons({ resource }: RequestMetadataIconsProps): JSX.Element | null {
+  const hasDependsOn = resource.dependsOn !== undefined && resource.dependsOn.length > 0;
+  const hasCondition = resource.condition !== undefined && resource.condition !== '';
   
-  if (!hasDependsOn && !hasCondition) return null;
+  if (!hasDependsOn && !hasCondition) {
+    return null;
+  }
   
   const iconColor = 'var(--orange-9)';
   
@@ -37,7 +40,7 @@ export function RequestMetadataIcons({ resource }: RequestMetadataIconsProps) {
               >
                 <div className="font-semibold mb-1">Dependencies</div>
                 <div className="text-xs opacity-90">
-                  Depends on: {resource.dependsOn!.join(', ')}
+                  Depends on: {resource.dependsOn?.join(', ')}
                 </div>
                 <Tooltip.Arrow style={{ fill: 'var(--gray-12)' }} />
               </Tooltip.Content>

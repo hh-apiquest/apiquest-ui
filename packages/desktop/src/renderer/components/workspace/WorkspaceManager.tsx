@@ -10,7 +10,29 @@ import {
 import { useScreenMode, useWorkspace } from '../../contexts';
 import type { WorkspaceWithMetadata } from '../../types/quest';
 
-export function WorkspaceManager() {
+interface EditingWorkspace {
+  path: string;
+  name: string;
+  description?: string;
+}
+
+interface WorkspaceDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => Promise<void>;
+}
+
+interface EditWorkspaceDialogProps {
+  workspace: EditingWorkspace;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}
+
+function getWorkspaceDisplayName(workspace: WorkspaceWithMetadata): string {
+  return workspace.metadata?.name ?? workspace.path.split(/[\\/]/).pop() ?? 'Unnamed';
+}
+
+export function WorkspaceManager(): JSX.Element {
   const { setMode } = useScreenMode();
   const { openWorkspace } = useWorkspace();
   const [workspaces, setWorkspaces] = useState<WorkspaceWithMetadata[]>([]);
@@ -18,13 +40,13 @@ export function WorkspaceManager() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [editingWorkspace, setEditingWorkspace] = useState<{ path: string; name: string; description?: string } | null>(null);
+  const [editingWorkspace, setEditingWorkspace] = useState<EditingWorkspace | null>(null);
 
   useEffect(() => {
-    loadWorkspaces();
+    void loadWorkspaces();
   }, []);
 
-  const loadWorkspaces = async () => {
+  const loadWorkspaces = async (): Promise<void> => {
     setIsLoading(true);
     try {
       const result = await window.quest.workspace.listWithMetadata();
@@ -36,7 +58,7 @@ export function WorkspaceManager() {
     }
   };
 
-  const handleOpenWorkspace = async (workspacePath: string) => {
+  const handleOpenWorkspace = async (workspacePath: string): Promise<void> => {
     try {
       await openWorkspace(workspacePath);
       setMode('request-editor'); // Switch back to main view
@@ -46,16 +68,16 @@ export function WorkspaceManager() {
     }
   };
 
-  const handleEditWorkspace = (ws: WorkspaceWithMetadata) => {
+  const handleEditWorkspace = (ws: WorkspaceWithMetadata): void => {
     setEditingWorkspace({
       path: ws.path,
-      name: ws.metadata?.name || '',
+      name: ws.metadata?.name ?? '',
       description: ws.metadata?.description
     });
   };
 
   const filteredWorkspaces = workspaces.filter((ws) => {
-    const name = ws.metadata?.name || ws.path.split(/[\\/]/).pop() || '';
+    const name = ws.metadata?.name ?? ws.path.split(/[\\/]/).pop() ?? '';
     return name.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
@@ -227,7 +249,7 @@ export function WorkspaceManager() {
           <div className="flex items-center justify-center" style={{ height: '256px' }}>
             <div className="text-center">
               <div className="wm-muted">No workspaces found</div>
-              {searchQuery && (
+              {searchQuery !== '' && (
                 <div className="text-sm wm-subtle mt-1">
                   Try a different search term
                 </div>
@@ -237,8 +259,8 @@ export function WorkspaceManager() {
         ) : (
           <div className="wm-grid">
             {filteredWorkspaces.map((ws) => {
-              const name = ws.metadata?.name || ws.path.split(/[\\/]/).pop() || 'Unnamed';
-              const createdAt = ws.metadata?.createdAt
+              const name = getWorkspaceDisplayName(ws);
+              const createdAt = ws.metadata?.createdAt !== undefined && ws.metadata.createdAt !== ''
                 ? new Date(ws.metadata.createdAt).toLocaleDateString()
                 : 'Unknown';
 
@@ -246,14 +268,14 @@ export function WorkspaceManager() {
                 <div
                   key={ws.path}
                   className="wm-card rounded-lg p-4 transition-colors cursor-pointer"
-                  onClick={() => handleOpenWorkspace(ws.path)}
+                  onClick={() => { void handleOpenWorkspace(ws.path); }}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold wm-title truncate">
                         {name}
                       </h3>
-                      {ws.metadata?.description && (
+                      {ws.metadata?.description !== undefined && ws.metadata.description !== '' && (
                         <p className="text-xs wm-subtle mt-1">
                           {ws.metadata.description}
                         </p>
@@ -295,11 +317,11 @@ export function WorkspaceManager() {
       <AddExistingWorkspaceDialog
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
-        onAdded={loadWorkspaces}
+        onCreated={loadWorkspaces}
       />
 
       {/* Edit Workspace Dialog */}
-      {editingWorkspace && (
+      {editingWorkspace !== null && (
         <EditWorkspaceDialog
           workspace={editingWorkspace}
           onClose={() => setEditingWorkspace(null)}
@@ -314,21 +336,17 @@ function CreateWorkspaceDialog({
   open,
   onOpenChange,
   onCreated
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
-}) {
+}: WorkspaceDialogProps): JSX.Element {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [useCustomLocation, setUseCustomLocation] = useState(false);
   const [customLocation, setCustomLocation] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
-  const handleBrowse = async () => {
+  const handleBrowse = async (): Promise<void> => {
     try {
       const folderPath = await window.quest.workspace.selectFolder();
-      if (folderPath) {
+      if (folderPath !== null && folderPath !== '') {
         setCustomLocation(folderPath);
       }
     } catch (error) {
@@ -336,9 +354,12 @@ function CreateWorkspaceDialog({
     }
   };
 
-  const handleCreate = async () => {
-    if (!name.trim()) return;
-    if (useCustomLocation && !customLocation.trim()) {
+  const handleCreate = async (): Promise<void> => {
+    if (name.trim() === '') {
+      return;
+    }
+
+    if (useCustomLocation && customLocation.trim() === '') {
       alert('Please select a location');
       return;
     }
@@ -352,7 +373,7 @@ function CreateWorkspaceDialog({
       );
 
       // Update metadata with description if provided
-      if (description.trim()) {
+      if (description.trim() !== '') {
         await window.quest.workspace.updateMetadata(workspacePath, {
           description: description.trim()
         });
@@ -437,7 +458,7 @@ function CreateWorkspaceDialog({
                       readOnly
                     />
                     <button
-                      onClick={handleBrowse}
+                      onClick={() => { void handleBrowse(); }}
                       className="wm-button wm-button-muted px-3 py-2 text-xs transition-colors"
                       type="button"
                     >
@@ -445,7 +466,7 @@ function CreateWorkspaceDialog({
                     </button>
                   </div>
                   <p className="text-xs wm-muted mt-1">
-                    Workspace will be created at: {customLocation ? `${customLocation}/${name || '(name)'}` : '(select a folder)'}
+                      Workspace will be created at: {customLocation !== '' ? `${customLocation}/${name !== '' ? name : '(name)'}` : '(select a folder)'}
                   </p>
                 </div>
               )}
@@ -457,8 +478,8 @@ function CreateWorkspaceDialog({
               Cancel
             </Dialog.Close>
             <button
-              onClick={handleCreate}
-              disabled={!name.trim() || isCreating || (useCustomLocation && !customLocation.trim())}
+               onClick={() => { void handleCreate(); }}
+               disabled={name.trim() === '' || isCreating || (useCustomLocation && customLocation.trim() === '')}
               className="wm-button wm-button-primary px-3 py-2 text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               type="button"
             >
@@ -474,19 +495,19 @@ function CreateWorkspaceDialog({
 function AddExistingWorkspaceDialog({
   open,
   onOpenChange,
-  onAdded
+  onCreated: onAdded
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdded: () => void;
-}) {
+  onCreated: () => Promise<void>;
+}): JSX.Element {
   const [selectedPath, setSelectedPath] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
-  const handleBrowse = async () => {
+  const handleBrowse = async (): Promise<void> => {
     try {
       const folderPath = await window.quest.workspace.selectFolder();
-      if (folderPath) {
+      if (folderPath !== null && folderPath !== '') {
         setSelectedPath(folderPath);
       }
     } catch (error) {
@@ -494,16 +515,18 @@ function AddExistingWorkspaceDialog({
     }
   };
 
-  const handleAdd = async () => {
-    if (!selectedPath.trim()) return;
+  const handleAdd = async (): Promise<void> => {
+    if (selectedPath.trim() === '') {
+      return;
+    }
 
     setIsAdding(true);
     try {
       // Check if workspace.json exists, if not create it
       const metadata = await window.quest.workspace.getMetadata(selectedPath);
-      if (!metadata) {
+      if (metadata === null) {
         // Workspace doesn't have metadata, create it
-        const folderName = selectedPath.split(/[\\/]/).pop() || 'Workspace';
+        const folderName = selectedPath.split(/[\\/]/).pop() ?? 'Workspace';
         await window.quest.workspace.updateMetadata(selectedPath, {
           id: crypto.randomUUID(),
           name: folderName,
@@ -549,7 +572,7 @@ function AddExistingWorkspaceDialog({
                   readOnly
                 />
                 <button
-                  onClick={handleBrowse}
+                  onClick={() => { void handleBrowse(); }}
                   className="wm-button wm-button-muted px-3 py-2 text-sm transition-colors"
                   type="button"
                 >
@@ -567,8 +590,8 @@ function AddExistingWorkspaceDialog({
               Cancel
             </Dialog.Close>
             <button
-              onClick={handleAdd}
-              disabled={!selectedPath.trim() || isAdding}
+               onClick={() => { void handleAdd(); }}
+               disabled={selectedPath.trim() === '' || isAdding}
               className="wm-button wm-button-primary px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               type="button"
             >
@@ -585,23 +608,21 @@ function EditWorkspaceDialog({
   workspace,
   onClose,
   onSaved
-}: {
-  workspace: { path: string; name: string; description?: string };
-  onClose: () => void;
-  onSaved: () => void;
-}) {
+}: EditWorkspaceDialogProps): JSX.Element {
   const [name, setName] = useState(workspace.name);
-  const [description, setDescription] = useState(workspace.description || '');
+  const [description, setDescription] = useState(workspace.description ?? '');
   const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = async () => {
-    if (!name.trim()) return;
+  const handleSave = async (): Promise<void> => {
+    if (name.trim() === '') {
+      return;
+    }
 
     setIsSaving(true);
     try {
       await window.quest.workspace.updateMetadata(workspace.path, {
         name: name.trim(),
-        description: description.trim() || undefined
+        description: description.trim() !== '' ? description.trim() : undefined
       });
 
       await onSaved();
@@ -615,7 +636,7 @@ function EditWorkspaceDialog({
   };
 
   return (
-    <Dialog.Root open={true} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root open={true} onOpenChange={(open) => { if (!open) { onClose(); } }}>
       <Dialog.Portal>
         <Dialog.Overlay className="wm-overlay" />
         <Dialog.Content className="wm-dialog p-6" style={{ width: '500px' }}>
@@ -664,8 +685,8 @@ function EditWorkspaceDialog({
               Cancel
             </button>
             <button
-              onClick={handleSave}
-              disabled={!name.trim() || isSaving}
+               onClick={() => { void handleSave(); }}
+               disabled={name.trim() === '' || isSaving}
               className="wm-button wm-button-primary px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               type="button"
             >

@@ -1,6 +1,7 @@
 // ConfirmDialog - Reusable confirmation dialog
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Button } from '@radix-ui/themes';
+import type { JSX } from 'react';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -28,14 +29,17 @@ export function ConfirmDialog({
   onDiscard,
   discardVariant = 'danger',
   variant = 'default'
-}: ConfirmDialogProps) {
-  const handleConfirm = () => {
+}: ConfirmDialogProps): JSX.Element {
+  const handleConfirm = (): void => {
     onConfirm();
     onOpenChange(false);
   };
 
-  const handleDiscard = async () => {
-    if (!onDiscard) return;
+  const handleDiscard = async (): Promise<void> => {
+    if (onDiscard === undefined) {
+      return;
+    }
+
     await onDiscard();
     onOpenChange(false);
   };
@@ -51,10 +55,10 @@ export function ConfirmDialog({
             {description}
           </AlertDialog.Description>
           <div className="flex items-center justify-between gap-2">
-            {onDiscard ? (
+            {onDiscard !== undefined ? (
               <AlertDialog.Action asChild>
                 <Button
-                  onClick={handleDiscard}
+                  onClick={() => { void handleDiscard(); }}
                   color={discardVariant === 'danger' ? 'red' : undefined}
                   size="1"
                 >

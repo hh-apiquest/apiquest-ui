@@ -1,5 +1,5 @@
 // Reusable input dialog component
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type JSX } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Button, TextField } from '@radix-ui/themes';
 
@@ -16,22 +16,22 @@ export function InputDialog({
   open, 
   onOpenChange, 
   title, 
-  placeholder = "Enter name",
+  placeholder = 'Enter name',
   defaultValue,
   onSubmit 
-}: InputDialogProps) {
-  const [value, setValue] = useState(defaultValue || '');
+}: InputDialogProps): JSX.Element {
+  const [value, setValue] = useState(defaultValue ?? '');
 
   // Update value when defaultValue or open changes
   useEffect(() => {
     if (open) {
-      setValue(defaultValue || '');
+      setValue(defaultValue ?? '');
     }
   }, [open, defaultValue]);
 
-  const handleSubmit = () => {
+  const handleSubmit = (): void => {
     console.log('[InputDialog] handleSubmit called with value:', value);
-    if (value.trim()) {
+    if (value.trim() !== '') {
       console.log('[InputDialog] Calling onSubmit with:', value.trim());
       onSubmit(value.trim());
       setValue('');
@@ -41,7 +41,7 @@ export function InputDialog({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter') {
       handleSubmit();
     }
@@ -70,7 +70,7 @@ export function InputDialog({
             </Dialog.Close>
             <Button
               onClick={handleSubmit}
-              disabled={!value.trim()}
+              disabled={value.trim() === ''}
               size="1"
             >
               Create

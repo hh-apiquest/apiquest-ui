@@ -1,6 +1,7 @@
 // UnifiedContextMenu - Single menu system for both three-dots and right-click
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ReactNode } from 'react';
+import { ReactNode, type JSX } from 'react';
+import type { ContextMenuPosition, EnvironmentContextInfo } from '../../types/context-menu';
 
 export type MenuAction = 
   | 'edit-variables' | 'set-active' | 'rename' | 'duplicate' | 'delete'
@@ -18,13 +19,17 @@ interface MenuSection {
 
 interface UnifiedContextMenuProps {
   type: 'environment' | 'collection' | 'folder' | 'request';
-  item: any;
+  item: unknown;
   trigger?: ReactNode;  // For three-dots button
   open?: boolean;       // For right-click control
   onOpenChange?: (open: boolean) => void;
-  onAction: (action: MenuAction, item: any) => void;
-  position?: { x: number; y: number };  // For right-click positioning
-  additionalInfo?: any; // For dynamic menu items (e.g., active status)
+  onAction: (action: MenuAction, item: unknown) => void;
+  position?: ContextMenuPosition;  // For right-click positioning
+  additionalInfo?: EnvironmentContextInfo; // For dynamic menu items (e.g., active status)
+}
+
+function getPortalContainer(): HTMLElement {
+  return document.querySelector<HTMLElement>('.radix-themes') ?? document.body;
 }
 
 export function UnifiedContextMenu({
@@ -36,7 +41,7 @@ export function UnifiedContextMenu({
   onAction,
   position,
   additionalInfo
-}: UnifiedContextMenuProps) {
+}: UnifiedContextMenuProps): JSX.Element {
   const getMenuSections = (): MenuSection[] => {
     switch (type) {
       case 'environment':
@@ -49,7 +54,7 @@ export function UnifiedContextMenu({
           {
             items: [
               { 
-                label: additionalInfo?.isActive ? 'Deactivate' : 'Set Active', 
+                label: additionalInfo?.isActive === true ? 'Deactivate' : 'Set Active', 
                 action: 'set-active' 
               }
             ]
@@ -127,10 +132,10 @@ export function UnifiedContextMenu({
   const menuSections = getMenuSections();
 
   // For right-click: render as fixed positioned dropdown
-  if (position) {
+  if (position !== undefined) {
     return (
       <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
-        <DropdownMenu.Portal container={document.querySelector('.radix-themes') || document.body}>
+        <DropdownMenu.Portal container={getPortalContainer()}>
           <DropdownMenu.Content
             className="context-menu"
             style={{
@@ -145,7 +150,7 @@ export function UnifiedContextMenu({
                 {section.items.map((menuItem) => (
                   <DropdownMenu.Item
                     key={menuItem.action}
-                    className={`context-menu-item ${menuItem.danger ? 'context-menu-item-danger' : ''}`}
+                    className={`context-menu-item ${menuItem.danger === true ? 'context-menu-item-danger' : ''}`}
                     onSelect={() => onAction(menuItem.action, item)}
                   >
                     {menuItem.label}
@@ -168,7 +173,7 @@ export function UnifiedContextMenu({
       <DropdownMenu.Trigger asChild>
         {trigger}
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal container={document.querySelector('.radix-themes') || document.body}>
+      <DropdownMenu.Portal container={getPortalContainer()}>
         <DropdownMenu.Content
           className="context-menu"
           align="start"
@@ -179,7 +184,7 @@ export function UnifiedContextMenu({
               {section.items.map((menuItem) => (
                 <DropdownMenu.Item
                   key={menuItem.action}
-                  className={`context-menu-item ${menuItem.danger ? 'context-menu-item-danger' : ''}`}
+                  className={`context-menu-item ${menuItem.danger === true ? 'context-menu-item-danger' : ''}`}
                   onSelect={() => onAction(menuItem.action, item)}
                 >
                   {menuItem.label}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type JSX } from 'react';
 import { ChevronRightIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 
 interface ObjectViewerProps {
@@ -9,7 +9,7 @@ interface ObjectViewerProps {
 
 const DEFAULT_MAX_DEPTH = 4;
 
-function renderPrimitive(value: unknown) {
+function renderPrimitive(value: unknown): JSX.Element | null {
   if (value === null) {
     return <span style={{ color: 'var(--gray-10)' }}>null</span>;
   }
@@ -45,11 +45,11 @@ function renderPrimitive(value: unknown) {
   return null;
 }
 
-export function ObjectViewer({ data, depth = 0, maxDepth = DEFAULT_MAX_DEPTH }: ObjectViewerProps) {
+export function ObjectViewer({ data, depth = 0, maxDepth = DEFAULT_MAX_DEPTH }: ObjectViewerProps): JSX.Element {
   const [isExpanded, setIsExpanded] = useState(depth === 0);
 
   const primitive = renderPrimitive(data);
-  if (primitive) {
+  if (primitive !== null) {
     return primitive;
   }
 
