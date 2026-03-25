@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { Theme, Spinner, Flex, Text } from '@radix-ui/themes';
 import { AppProviders } from './contexts';
 import { MainLayout } from './components/layout';
@@ -9,7 +9,7 @@ import { PluginInteractionPortal } from './components/plugins/PluginInteractionP
 pluginLoader.initialize('light');
 console.log('ApiQuest Desktop initialized');
 
-function LoadingScreen() {
+function LoadingScreen(): JSX.Element {
   return (
     <Flex
       direction="column"
@@ -26,13 +26,16 @@ function LoadingScreen() {
   );
 }
 
-function AppContent() {
+function AppContent(): JSX.Element {
   const { actualTheme } = useTheme();
   const [pluginsLoaded, setPluginsLoaded] = useState(pluginManagerService.arePluginsLoaded());
   
-  useEffect(() => {
+  useEffect((): (() => void) | void => {
     if (!pluginsLoaded) {
-      const handlePluginsLoaded = () => setPluginsLoaded(true);
+      const handlePluginsLoaded = (): void => {
+        setPluginsLoaded(true);
+      };
+
       pluginManagerService.on('pluginsLoaded', handlePluginsLoaded);
 
       // Avoid missing the event if plugins finished loading before this listener attached.
@@ -65,7 +68,7 @@ function AppContent() {
   );
 }
 
-export function App() {
+export function App(): JSX.Element {
   return (
     <AppProviders>
       <AppContent />

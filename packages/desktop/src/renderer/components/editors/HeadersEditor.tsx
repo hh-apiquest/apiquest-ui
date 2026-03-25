@@ -41,16 +41,16 @@ const HEADER_VALUES: Record<string, string[]> = {
   'Connection': ['keep-alive', 'close'],
 };
 
-export function HeadersEditor({ headers, onChange, generatedHeaders, editorState, onEditorStateChange }: HeadersEditorProps) {
+export function HeadersEditor({ headers, onChange, generatedHeaders, editorState, onEditorStateChange }: HeadersEditorProps): React.ReactElement {
   // Controlled mode: use editorState from parent; uncontrolled: local state
   const [localGeneratedVisible, setLocalGeneratedVisible] = useState(false);
   const generatedVisible = editorState !== undefined
     ? (editorState.generatedVisible ?? false)
     : localGeneratedVisible;
 
-  const setGeneratedVisible = (v: boolean | ((prev: boolean) => boolean)) => {
+  const setGeneratedVisible = (v: boolean | ((prev: boolean) => boolean)): void => {
     const next = typeof v === 'function' ? v(generatedVisible) : v;
-    if (onEditorStateChange) {
+    if (onEditorStateChange !== undefined) {
       onEditorStateChange({ ...(editorState ?? {}), generatedVisible: next });
     } else {
       setLocalGeneratedVisible(next);
@@ -60,11 +60,12 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
 
-  useEffect(() => {
-    if (pendingFocus.current) {
-      const { index, field } = pendingFocus.current;
+  useEffect((): void => {
+    const pending = pendingFocus.current;
+    if (pending !== null) {
+      const { index, field } = pending;
       const el = inputRefs.current.get(`${index}-${field}`);
-      if (el) {
+      if (el !== undefined) {
         el.focus();
         el.setSelectionRange(el.value.length, el.value.length);
       }
@@ -72,12 +73,15 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
     }
   }, [headers.length]);
 
-  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
-    if (el) inputRefs.current.set(`${index}-${field}`, el);
-    else inputRefs.current.delete(`${index}-${field}`);
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null): void => {
+    if (el !== null) {
+      inputRefs.current.set(`${index}-${field}`, el);
+    } else {
+      inputRefs.current.delete(`${index}-${field}`);
+    }
   };
 
-  const handleChange = (index: number, field: keyof HeaderEntry, value: string | boolean) => {
+  const handleChange = (index: number, field: keyof HeaderEntry, value: string | boolean): void => {
     const next = [...headers];
     if (index >= next.length) {
       next.push({
@@ -88,21 +92,31 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
       });
       pendingFocus.current = {
         index: next.length - 1,
-        field: field === 'description' ? 'key' : (field as 'key' | 'value'),
+        field: field === 'description' || field === 'enabled' ? 'key' : field,
       };
     } else {
-      next[index] = { ...next[index], [field]: value };
+      const currentHeader = next[index];
+      if (currentHeader === undefined) {
+        return;
+      }
+
+      next[index] = { ...currentHeader, [field]: value };
     }
     onChange(next);
   };
 
-  const handleToggle = (index: number) => {
+  const handleToggle = (index: number): void => {
     const next = [...headers];
-    next[index] = { ...next[index], enabled: !next[index].enabled };
+    const currentHeader = next[index];
+    if (currentHeader === undefined) {
+      return;
+    }
+
+    next[index] = { ...currentHeader, enabled: currentHeader.enabled !== true };
     onChange(next);
   };
 
-  const handleDelete = (index: number) => {
+  const handleDelete = (index: number): void => {
     onChange(headers.filter((_, i) => i !== index));
   };
 
@@ -111,11 +125,13 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
 
   // Keys set by the user (enabled) - used to mark generated entries as overridden
   const manualKeySet = new Set(
-    headers.filter(r => r.enabled && r.key.trim()).map(r => r.key.toLowerCase())
+    headers
+      .filter((row) => row.enabled && row.key.trim() !== '')
+      .map((row) => row.key.toLowerCase())
   );
 
   // Add placeholder empty row at the end for new-entry UX
-  const displayRows = [...headers, { key: '', value: '', description: '', enabled: true }];
+  const displayRows: HeaderEntry[] = [...headers, { key: '', value: '', description: '', enabled: true }];
 
   return (
     <div
@@ -269,7 +285,7 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span className="gen-src">{entry.source}</span>
-                        {entry.description && <span className="gen-src">— {entry.description}</span>}
+                        {entry.description !== undefined && entry.description !== '' && <span className="gen-src">— {entry.description}</span>}
                         {isOverridden && <span className="gen-badge">overridden</span>}
                       </span>
                     </td>
@@ -334,7 +350,7 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
                     style={{ width: '100%' }}
                   />
                   <datalist id={`hdr-klist-${index}`}>
-                    {COMMON_HEADERS.map(s => <option key={s} value={s} />)}
+                      {COMMON_HEADERS.map((headerName) => <option key={headerName} value={headerName} />)}
                   </datalist>
                 </td>
 
@@ -349,12 +365,12 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
                     onBlur={() => setFocusedRow(null)}
                     placeholder={isEmptyRow ? 'Value' : ''}
                     disabled={isDisabled}
-                    list={row.key && HEADER_VALUES[row.key] ? `hdr-vlist-${index}` : undefined}
+                    list={row.key !== '' && HEADER_VALUES[row.key] !== undefined ? `hdr-vlist-${index}` : undefined}
                     style={{ width: '100%' }}
                   />
-                  {row.key && HEADER_VALUES[row.key] && (
+                  {row.key !== '' && HEADER_VALUES[row.key] !== undefined && (
                     <datalist id={`hdr-vlist-${index}`}>
-                      {HEADER_VALUES[row.key].map(s => <option key={s} value={s} />)}
+                      {HEADER_VALUES[row.key].map((headerValue) => <option key={headerValue} value={headerValue} />)}
                     </datalist>
                   )}
                 </td>
@@ -363,7 +379,7 @@ export function HeadersEditor({ headers, onChange, generatedHeaders, editorState
                 <td>
                   <TextField.Root
                     size="1"
-                    value={row.description || ''}
+                    value={row.description ?? ''}
                     onChange={(e) => handleChange(index, 'description', e.target.value)}
                     onFocus={() => setFocusedRow(index)}
                     onBlur={() => setFocusedRow(null)}

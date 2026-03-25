@@ -10,6 +10,18 @@ import { App } from './App';
 import '@radix-ui/themes/styles.css';
 import './styles.css';
 
+type SharedVendorModules = {
+  react: typeof React;
+  reactDom: typeof ReactDOM;
+  reactJsxRuntime: typeof ReactJsxRuntime;
+  reactJsxDevRuntime: typeof ReactJsxDevRuntime;
+  radixThemes: typeof RadixThemes;
+};
+
+type VendorWindow = Window & {
+  __VENDOR__?: SharedVendorModules;
+};
+
 /**
  * Expose critical shared modules as globals so plugins share the same instances.
  * The vendor:// protocol serves shim code that reads from window.__VENDOR__,
@@ -18,7 +30,7 @@ import './styles.css';
  * Only React and Radix UI are shared - other deps (heroicons, etc.) are bundled
  * by each plugin individually.
  */
-(window as any).__VENDOR__ = {
+(window as VendorWindow).__VENDOR__ = {
   react: React,
   reactDom: ReactDOM,
   reactJsxRuntime: ReactJsxRuntime,

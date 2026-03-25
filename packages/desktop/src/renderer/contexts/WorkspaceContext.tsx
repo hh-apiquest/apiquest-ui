@@ -1,12 +1,67 @@
 // WorkspaceContext - Manages active workspace and collections
 // Layer: Contexts (React layer, wraps WorkspaceService)
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, type ReactElement, type ReactNode, useCallback } from 'react';
 import type { Workspace } from '../types/workspace';
-import type { Collection, CollectionMetadata } from '../types/request';
+import type { Collection, CollectionItem, Folder, Request } from '../types/request';
 import type { EnvironmentMetadata } from '../types/environment';
 import type { Environment } from '@apiquest/types';
 import { workspaceService } from '../services';
+
+type RecentWorkspaces = string[];
+
+function parseRecentWorkspaces(value: string | null): RecentWorkspaces {
+  if (value === null) {
+    return [];
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function isFolderItem(item: CollectionItem): item is Folder {
+  return item.type === 'folder';
+}
+
+function isRequestItem(item: CollectionItem): item is Request {
+  return item.type === 'request';
+}
+
+function updateRequestInItems(items: CollectionItem[], requestId: string, updates: Partial<Request>): boolean {
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (isRequestItem(item) && item.id === requestId) {
+      items[i] = { ...item, ...updates };
+      return true;
+    }
+
+    if (isFolderItem(item) && updateRequestInItems(item.items, requestId, updates)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function updateFolderInItems(items: CollectionItem[], folderId: string, updates: Partial<Folder>): boolean {
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (isFolderItem(item) && item.id === folderId) {
+      items[i] = { ...item, ...updates, items: item.items };
+      return true;
+    }
+
+    if (isFolderItem(item) && updateFolderInItems(item.items, folderId, updates)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 interface WorkspaceContextValue {
   // Current workspace
@@ -21,9 +76,9 @@ interface WorkspaceContextValue {
   
   // Collection operations (with cache)
   getCollection: (collectionId: string) => Promise<Collection>;
-  updateCollection: (collectionId: string, updates: any) => Promise<void>;
-  updateRequest: (collectionId: string, requestId: string, updates: any) => Promise<void>;
-  updateFolder: (collectionId: string, folderId: string, updates: any) => Promise<void>;
+  updateCollection: (collectionId: string, updates: Partial<Collection>) => Promise<void>;
+  updateRequest: (collectionId: string, requestId: string, updates: Partial<Request>) => Promise<void>;
+  updateFolder: (collectionId: string, folderId: string, updates: Partial<Folder>) => Promise<void>;
   saveCollection: (collectionId: string) => Promise<void>;
   clearCollectionCache: (collectionId?: string) => void;
   
@@ -44,7 +99,7 @@ interface WorkspaceProviderProps {
   children: ReactNode;
 }
 
-export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
+export function WorkspaceProvider({ children }: WorkspaceProviderProps): ReactElement {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +108,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   // Collection cache - lazy-loaded on first access
   const [collectionCache, setCollectionCache] = useState<Map<string, Collection>>(new Map());
 
-  const openWorkspace = async (folderPath: string) => {
+  const openWorkspace = async (folderPath: string): Promise<void> => {
     setIsLoading(true);
     setError(null);
     
@@ -62,8 +117,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       setWorkspace(ws);
       
       // Save to recent workspaces
-      const recent = JSON.parse(localStorage.getItem('recentWorkspaces') || '[]');
-      const updated = [folderPath, ...recent.filter((p: string) => p !== folderPath)].slice(0, 10);
+      const recent = parseRecentWorkspaces(localStorage.getItem('recentWorkspaces'));
+      const updated = [folderPath, ...recent.filter((path) => path !== folderPath)].slice(0, 10);
       localStorage.setItem('recentWorkspaces', JSON.stringify(updated));
       
       // Save as last opened
@@ -76,13 +131,16 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     }
   };
 
-  const closeWorkspace = () => {
+  const closeWorkspace = (): void => {
     setWorkspace(null);
     localStorage.removeItem('lastWorkspace');
   };
 
-  const refreshWorkspace = async () => {
-    if (!workspace) return;
+  const refreshWorkspace = async (): Promise<void> => {
+    if (workspace === null) {
+      return;
+    }
+
     console.log('[WorkspaceContext] Refreshing workspace, clearing collection cache');
     setCollectionCache(new Map()); // Clear cache to force reload from disk
     await openWorkspace(workspace.path);
@@ -90,11 +148,13 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
 
   // Get collection (with lazy loading & caching)
   const getCollection = useCallback(async (collectionId: string): Promise<Collection> => {
-    if (!workspace) throw new Error('No workspace selected');
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
     
     // Check cache first
     if (collectionCache.has(collectionId)) {
-      return collectionCache.get(collectionId)!;
+      return collectionCache.get(collectionId) ?? await window.quest.workspace.loadCollection(workspace.id, collectionId);
     }
     
     // Load from disk & cache
@@ -105,8 +165,10 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, [workspace, collectionCache]);
 
   // Update entire collection
-  const updateCollection = useCallback(async (collectionId: string, updates: any) => {
-    if (!workspace) throw new Error('No workspace selected');
+  const updateCollection = useCallback(async (collectionId: string, updates: Partial<Collection>): Promise<void> => {
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
     
     const collection = await getCollection(collectionId);
     const updated = { ...collection, ...updates };
@@ -120,30 +182,13 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, [workspace, getCollection]);
 
   // Update request in collection
-  const updateRequest = useCallback(async (collectionId: string, requestId: string, updates: any) => {
-    if (!workspace) throw new Error('No workspace selected');
+  const updateRequest = useCallback(async (collectionId: string, requestId: string, updates: Partial<Request>): Promise<void> => {
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
     
     const collection = await getCollection(collectionId);
-    
-    // Find and update request in tree
-    const updateInItems = (items: any[]): boolean => {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type === 'request' && items[i].id === requestId) {
-          items[i] = { ...items[i], ...updates };
-          return true;
-        }
-        if (items[i].type === 'folder' && items[i].items) {
-          if (updateInItems(items[i].items)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    };
-
-    if (collection.items) {
-      updateInItems(collection.items);
-    }
+    updateRequestInItems(collection.items, requestId, updates);
 
     // Update cache
     setCollectionCache(prev => new Map(prev).set(collectionId, { ...collection }));
@@ -154,31 +199,13 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, [workspace, getCollection]);
 
   // Update folder in collection
-  const updateFolder = useCallback(async (collectionId: string, folderId: string, updates: any) => {
-    if (!workspace) throw new Error('No workspace selected');
+  const updateFolder = useCallback(async (collectionId: string, folderId: string, updates: Partial<Folder>): Promise<void> => {
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
     
     const collection = await getCollection(collectionId);
-    
-    // Find and update folder in tree
-    const updateInItems = (items: any[]): boolean => {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type === 'folder' && items[i].id === folderId) {
-          // Preserve items array, update other properties
-          items[i] = { ...items[i], ...updates, items: items[i].items };
-          return true;
-        }
-        if (items[i].type === 'folder' && items[i].items) {
-          if (updateInItems(items[i].items)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    };
-
-    if (collection.items) {
-      updateInItems(collection.items);
-    }
+    updateFolderInItems(collection.items, folderId, updates);
 
     // Update cache
     setCollectionCache(prev => new Map(prev).set(collectionId, { ...collection }));
@@ -189,11 +216,13 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, [workspace, getCollection]);
 
   // Save collection to disk
-  const saveCollection = useCallback(async (collectionId: string) => {
-    if (!workspace) throw new Error('No workspace selected');
+  const saveCollection = useCallback(async (collectionId: string): Promise<void> => {
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
     
     const collection = collectionCache.get(collectionId);
-    if (!collection) {
+    if (collection === undefined) {
       throw new Error(`Collection not in cache: ${collectionId}`);
     }
     
@@ -202,8 +231,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, [workspace, collectionCache]);
 
   // Clear collection cache (useful for refresh)
-  const clearCollectionCache = useCallback((collectionId?: string) => {
-    if (collectionId) {
+  const clearCollectionCache = useCallback((collectionId?: string): void => {
+    if (collectionId !== undefined && collectionId !== '') {
       setCollectionCache(prev => {
         const next = new Map(prev);
         next.delete(collectionId);
@@ -217,10 +246,10 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   }, []);
 
   // Environment management
-  const setActiveEnvironment = (env: EnvironmentMetadata | null) => {
+  const setActiveEnvironment = (env: EnvironmentMetadata | null): void => {
     setActiveEnvironmentState(env);
-    if (workspace) {
-      if (env) {
+    if (workspace !== null) {
+      if (env !== null) {
         localStorage.setItem(`activeEnv:${workspace.path}`, env.id);
       } else {
         localStorage.removeItem(`activeEnv:${workspace.path}`);
@@ -228,14 +257,20 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     }
   };
 
-  const createEnvironment = async (name: string) => {
-    if (!workspace) return;
+  const createEnvironment = async (name: string): Promise<void> => {
+    if (workspace === null) {
+      return;
+    }
+
     await window.quest.environment.create(workspace.id, name);
     await refreshWorkspace();
   };
 
-  const renameEnvironment = async (env: EnvironmentMetadata, newName: string) => {
-    if (!workspace) return;
+  const renameEnvironment = async (env: EnvironmentMetadata, newName: string): Promise<void> => {
+    if (workspace === null) {
+      return;
+    }
+
     const sanitizedNewName = newName.trim().replace(/[^a-z0-9-_\s]/gi, '-');
     await window.quest.environment.rename(workspace.id, env.fileName, sanitizedNewName);
     if (activeEnvironment?.id === env.id) {
@@ -245,8 +280,11 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     await refreshWorkspace();
   };
 
-  const deleteEnvironment = async (env: EnvironmentMetadata) => {
-    if (!workspace) return;
+  const deleteEnvironment = async (env: EnvironmentMetadata): Promise<void> => {
+    if (workspace === null) {
+      return;
+    }
+
     await window.quest.environment.delete(workspace.id, env.fileName);
     if (activeEnvironment?.id === env.id) {
       setActiveEnvironment(null);
@@ -254,31 +292,40 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
     await refreshWorkspace();
   };
 
-  const duplicateEnvironment = async (env: EnvironmentMetadata, newName: string) => {
-    if (!workspace) return;
+  const duplicateEnvironment = async (env: EnvironmentMetadata, newName: string): Promise<void> => {
+    if (workspace === null) {
+      return;
+    }
+
     const sanitizedNewName = newName.trim().replace(/[^a-z0-9-_\s]/gi, '-');
     await window.quest.environment.duplicate(workspace.id, env.fileName, sanitizedNewName);
     await refreshWorkspace();
   };
 
   const loadEnvironment = async (fileName: string): Promise<Environment> => {
-    if (!workspace) throw new Error('No workspace selected');
-    return await window.quest.environment.load(workspace.id, fileName);
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
+
+    return await window.quest.environment.load(workspace.id, fileName) as Environment;
   };
 
   const saveEnvironment = async (fileName: string, environment: Environment): Promise<void> => {
-    if (!workspace) throw new Error('No workspace selected');
+    if (workspace === null) {
+      throw new Error('No workspace selected');
+    }
+
     await window.quest.environment.save(workspace.id, fileName, environment);
     await refreshWorkspace();
   };
 
   // Restore active environment when workspace changes
-  useEffect(() => {
-    if (workspace) {
+  useEffect((): void => {
+    if (workspace !== null) {
       const savedEnvId = localStorage.getItem(`activeEnv:${workspace.path}`);
-      if (savedEnvId) {
-        const env = workspace.environments.find(e => e.id === savedEnvId);
-        setActiveEnvironmentState(env || null);
+      if (savedEnvId !== null && savedEnvId !== '') {
+        const env = workspace.environments.find((environment) => environment.id === savedEnvId);
+        setActiveEnvironmentState(env ?? null);
       } else {
         setActiveEnvironmentState(null);
       }
@@ -289,9 +336,9 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
 
   // Auto-load default workspace on mount
   useEffect(() => {
-    const loadWorkspace = async () => {
+    const loadWorkspace = async (): Promise<void> => {
       const lastWorkspace = localStorage.getItem('lastWorkspace');
-      if (lastWorkspace) {
+      if (lastWorkspace !== null && lastWorkspace !== '') {
         await openWorkspace(lastWorkspace);
       } else {
         // Load default workspace from app data
@@ -300,8 +347,8 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
       }
     };
     
-    loadWorkspace();
-  }, []);
+    void loadWorkspace();
+  }, [openWorkspace]);
 
   return (
     <WorkspaceContext.Provider
@@ -333,9 +380,9 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps) {
   );
 }
 
-export function useWorkspace() {
+export function useWorkspace(): WorkspaceContextValue {
   const context = useContext(WorkspaceContext);
-  if (!context) {
+  if (context === null) {
     throw new Error('useWorkspace must be used within WorkspaceProvider');
   }
   return context;

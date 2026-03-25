@@ -1,7 +1,7 @@
 // NetworkContext - Manages network history
 // Layer: Contexts (React layer, wraps NetworkService)
 
-import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import type { NetworkEntry } from '../types/network';
 import { networkService } from '../services/NetworkService';
 
@@ -16,27 +16,25 @@ interface NetworkProviderProps {
   children: ReactNode;
 }
 
-export function NetworkProvider({ children }: NetworkProviderProps) {
+export function NetworkProvider({ children }: NetworkProviderProps): ReactElement {
   const [entries, setEntries] = useState<NetworkEntry[]>(networkService.getEntries());
-  const unsubscribeRef = useRef<() => void>();
+  const unsubscribeRef = useRef<(() => void) | undefined>(undefined);
 
-  useEffect(() => {
-    const handleUpdated = (updatedEntries: NetworkEntry[]) => {
+  useEffect((): (() => void) => {
+    const handleUpdated = (updatedEntries: NetworkEntry[]): void => {
       setEntries(updatedEntries);
     };
 
-    const handleCleared = () => {
+    const handleCleared = (): void => {
       setEntries([]);
     };
 
     networkService.on('updated', handleUpdated);
     networkService.on('cleared', handleCleared);
 
-    if (!unsubscribeRef.current) {
-      unsubscribeRef.current = networkService.connectToExecutionStream(
+    unsubscribeRef.current ??= networkService.connectToExecutionStream(
         window.quest.runner.onExecutionEvent
       );
-    }
 
     return () => {
       networkService.off('updated', handleUpdated);
@@ -44,7 +42,7 @@ export function NetworkProvider({ children }: NetworkProviderProps) {
     };
   }, []);
 
-  const clear = () => {
+  const clear = (): void => {
     networkService.clear();
   };
 
@@ -55,9 +53,9 @@ export function NetworkProvider({ children }: NetworkProviderProps) {
   );
 }
 
-export function useNetwork() {
+export function useNetwork(): NetworkContextValue {
   const context = useContext(NetworkContext);
-  if (!context) {
+  if (context === null) {
     throw new Error('useNetwork must be used within NetworkProvider');
   }
   return context;

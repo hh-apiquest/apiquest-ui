@@ -12,7 +12,7 @@ export { ScreenModeProvider, useScreenMode } from './ScreenModeContext';
 export type { ScreenMode, SettingsTab } from './ScreenModeContext';
 
 // Combined provider for easy app wrapping
-import React, { ReactNode } from 'react';
+import React, { type ReactElement, type ReactNode } from 'react';
 import { ThemeProvider } from './ThemeContext';
 import { SettingsProvider } from './SettingsContext';
 import { WorkspaceProvider } from './WorkspaceContext';
@@ -31,7 +31,7 @@ interface AppProvidersProps {
  * Combines all context providers in the correct order
  * Wrap your App component with this
  */
-export function AppProviders({ children }: AppProvidersProps) {
+export function AppProviders({ children }: AppProvidersProps): ReactElement {
   return (
     <ThemeProvider>
       <SettingsProvider>

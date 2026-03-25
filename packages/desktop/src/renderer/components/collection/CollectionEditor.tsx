@@ -1,36 +1,73 @@
 // CollectionEditor - Editor for collection-level settings (Auth, Scripts, Runner)
-import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo, type JSX } from 'react';
 import { pluginLoader } from '../../services';
 import { useTabEditorBridge, useTabStatusActions, useTabNavigation } from '../../contexts';
 import { useWorkspace, useTheme } from '../../contexts';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import * as Tabs from '@radix-ui/react-tabs';
 import type { Tab } from '../../contexts/TabContext';
+import type { Auth, Collection, ProtocolScript } from '@apiquest/types';
+import type { PluginUIContext, IAuthPluginUI } from '@apiquest/plugin-ui-types';
 import { RunnerTab } from './RunnerTab';
 import { OptionsTab } from '../request/OptionsTab';
+import type { RunnerCollection } from '../../types/runner-tab';
+import type { ProtocolPluginWithEvents } from '../../types/plugin-loader';
 
 interface CollectionEditorProps {
   tab: Tab;
 }
 
-export function CollectionEditor({ tab }: CollectionEditorProps) {
+type CollectionEditorCollection = RunnerCollection & {
+  scripts?: ProtocolScript[];
+};
+
+type CollectionEditorSessionState = Pick<
+  CollectionEditorCollection,
+  'auth' | 'collectionPreScript' | 'collectionPostScript' | 'preRequestScript' | 'postRequestScript'
+>;
+
+type CollectionEditorUiContext = PluginUIContext & {
+  Radix: typeof import('@radix-ui/themes');
+  theme: 'light' | 'dark';
+};
+
+type AuthTabProps = {
+  collection: CollectionEditorCollection;
+  onChange: (collection: CollectionEditorCollection) => void;
+  uiContext: CollectionEditorUiContext;
+  supportedAuthTypes: string[];
+};
+
+type ScriptsTabProps = {
+  collection: CollectionEditorCollection;
+  onChange: (collection: CollectionEditorCollection) => void;
+  uiContext: CollectionEditorUiContext;
+  protocol: string;
+  theme: 'light' | 'dark';
+};
+
+function isAuthDataRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
   const { setDirty, setName } = useTabStatusActions();
   const { registerSaveHandler, registerDiscardHandler } = useTabEditorBridge();
   const { saveResourceState, clearResourceState, getResourceState, updateTabUIState, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { workspace, updateCollection, clearCollectionCache, refreshWorkspace } = useWorkspace();
   const { actualTheme } = useTheme();
-  const [collection, setCollection] = useState<any>(null);
+  const [collection, setCollection] = useState<CollectionEditorCollection | null>(null);
   // Stable ref so handleAutoSave never captures a stale collection closure.
-  const collectionRef = useRef<any>(null);
+  const collectionRef = useRef<CollectionEditorCollection | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab || 'auth');
+  const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab ?? 'auth');
   
   // Get UI context for tab components (memoized to prevent re-creating on every render)
-  const uiContext = useMemo(() => pluginLoader.getUIContext(), []);
+  const uiContext = useMemo(() => pluginLoader.getUIContext() as CollectionEditorUiContext, []);
 
   // Sync local state with tab.uiState on tab changes
-  useEffect(() => {
-    const newActiveSubTab = tab.uiState?.activeSubTab || 'auth';
+  useEffect((): void => {
+    const newActiveSubTab = tab.uiState?.activeSubTab ?? 'auth';
     console.log('[CollectionEditor] Restoring tab state:', {
       tabId: tab.id,
       'tab.uiState': tab.uiState,
@@ -42,30 +79,32 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
   }, [tab.id, tab.uiState?.activeSubTab]);
 
   // Keep collectionRef current so handleAutoSave and the save handler always read latest data.
-  useEffect(() => {
+  useEffect((): void => {
     collectionRef.current = collection;
   }, [collection]);
 
   // Load collection from workspace
   useEffect(() => {
-    const loadCollection = async () => {
-      if (!workspace) return;
+    const loadCollection = async (): Promise<void> => {
+      if (workspace === null) {
+        return;
+      }
       
       try {
         setIsLoading(true);
-        const baseCollection = await window.quest.workspace.loadCollection(workspace.id, tab.resourceId);
+        const baseCollection = await window.quest.workspace.loadCollection(workspace.id, tab.resourceId) as CollectionEditorCollection;
         
         // Primary: in-memory state from a previous tab switch.
         // Secondary: IPC session state (app restart recovery).
-        const inMemoryState = getTabEditorState(tab.id) as any;
+        const inMemoryState = getTabEditorState(tab.id) as CollectionEditorCollection | undefined;
         
-        let finalCollection: any;
-        if (inMemoryState) {
+        let finalCollection: CollectionEditorCollection;
+        if (inMemoryState !== undefined) {
           finalCollection = inMemoryState;
           setDirty(tab.id, true);
         } else {
           // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
-          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
+          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`) as CollectionEditorSessionState | null;
           finalCollection = {
             ...baseCollection,
             auth: sessionState?.auth ?? baseCollection.auth,
@@ -74,28 +113,32 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
             preRequestScript: sessionState?.preRequestScript ?? baseCollection.preRequestScript ?? '',
             postRequestScript: sessionState?.postRequestScript ?? baseCollection.postRequestScript ?? ''
           };
-          if (sessionState) {
+          if (sessionState !== null) {
             setDirty(tab.id, true);
           }
         }
         
         setCollection(finalCollection);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to load collection:', error);
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadCollection();
-  }, [tab.id]);
+    void loadCollection();
+  }, [getResourceState, getTabEditorState, setDirty, tab.collectionId, tab.id, tab.resourceId, workspace]);
 
   // Register save handler for TabBar close flow
   useEffect(() => {
-    if (!workspace) return;
+    if (workspace === null) {
+      return;
+    }
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!collectionRef.current) return;
+      if (collectionRef.current === null) {
+        return;
+      }
       // Strip transient in-memory fields before persisting to the collection file.
       const { _runnerState: _rs, ...currentCollection } = collectionRef.current;
       await updateCollection(tab.collectionId, currentCollection);
@@ -108,13 +151,15 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     });
 
     return unregister;
-  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, updateCollection, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
+  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, tab.resourceId, updateCollection, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
 
   // Stable auto-save callback — does NOT depend on `collection` state directly.
   // Reads collectionRef.current to prevent useAutoSave's cleanup from firing on every change.
   // _runnerState is NOT stored in IPC session (File objects can't serialize; use in-memory only).
   const handleAutoSave = useCallback(async () => {
-    if (!workspace || !collectionRef.current) return;
+    if (workspace === null || collectionRef.current === null) {
+      return;
+    }
     const currentCollection = collectionRef.current;
     
     try {
@@ -127,7 +172,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
         postRequestScript: currentCollection.postRequestScript
         // _runnerState intentionally omitted — in-memory only, not serialized to IPC session
       });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('AutoSave failed:', error);
     }
   }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
@@ -135,7 +180,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
   const { trigger: triggerAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
     delay: 1000,
-    enabled: !!workspace && !!collection
+    enabled: workspace !== null && collection !== null
   });
 
   useEffect(() => {
@@ -147,12 +192,12 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     return unregisterDiscard;
   }, [registerDiscardHandler, tab.id, cancelAutoSave, clearTabEditorState]);
 
-  const handleCollectionChange = (updatedCollection: any) => {
+  const handleCollectionChange = (updatedCollection: CollectionEditorCollection): void => {
     setCollection(updatedCollection);
     // Immediately store in in-memory tab state — primary persistence mechanism for tab switches.
     setTabEditorState(tab.id, updatedCollection);
     setDirty(tab.id, true);
-    if (updatedCollection?.info?.name) {
+    if (updatedCollection.info.name !== '') {
       setName(tab.id, updatedCollection.info.name);
     }
     triggerAutoSave();
@@ -162,7 +207,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
     return <div className="flex items-center justify-center h-full"><div className="text-sm text-gray-500">Loading...</div></div>;
   }
 
-  if (!collection) {
+  if (collection === null) {
     return <div className="flex items-center justify-center h-full text-gray-500">Collection not found</div>;
   }
 
@@ -181,7 +226,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
       {/* Header */}
       <div className="flex items-center gap-2 p-4 border-b" style={{ borderColor: 'var(--gray-6)' }}>
         <div className="flex-1">
-          <h2 className="text-lg font-semibold">{collection.info?.name || 'Collection'}</h2>
+          <h2 className="text-lg font-semibold">{collection.info.name !== '' ? collection.info.name : 'Collection'}</h2>
           <p className="text-xs mt-1" style={{ color: 'var(--gray-9)' }}>
             Configure collection-level authentication, scripts, and runner settings
           </p>
@@ -202,7 +247,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
         >
           {/* Tab List */}
           <Tabs.List className="flex items-center border-b px-4 editor-tabs-list" style={{ borderColor: 'var(--gray-6)' }}>
-            {tabs.map(tabItem => (
+            {tabs.map((tabItem) => (
               <Tabs.Trigger
                 key={tabItem.id}
                 value={tabItem.id}
@@ -258,13 +303,15 @@ export function CollectionEditor({ tab }: CollectionEditorProps) {
 }
 
 // Auth Tab Component for Collection
-function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: any) {
+function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: AuthTabProps): JSX.Element {
   const { React, Radix } = uiContext;
-  const authType = (!collection.auth || collection.auth.type === 'inherit' || collection.auth.type === 'none') ? 'none' : collection.auth.type;
+  const authType = collection.auth === undefined || collection.auth.type === 'inherit' || collection.auth.type === 'none'
+    ? 'none'
+    : collection.auth.type;
   
   // Get loaded auth plugin UIs
   const loadedAuthTypes = React.useMemo(() => {
-    const loaded = pluginLoader.getAllAuthPluginUIs().map(ui => ui.type);
+    const loaded = pluginLoader.getAllAuthPluginUIs().map((ui) => ui.type);
     return loaded;
   }, []);
   
@@ -275,31 +322,39 @@ function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: any) {
   }, [supportedAuthTypes, loadedAuthTypes]);
   
   // Get the auth plugin UI
-  const authPluginUI = React.useMemo(() => {
+  const authPluginUI = React.useMemo<IAuthPluginUI | null>(() => {
     if (authType === 'none') return null;
-    return pluginLoader.getAuthPluginUI(authType);
+    return pluginLoader.getAuthPluginUI(authType) ?? null;
   }, [authType]);
   
   // Get auth data
-  const authData = React.useMemo(() => {
-    if (authType === 'none' || !authPluginUI) return {};
-    if (collection.auth?.data) return collection.auth.data;
-    return authPluginUI.createDefault ? authPluginUI.createDefault() : {};
+  const authData = React.useMemo<Record<string, unknown>>(() => {
+    if (authType === 'none' || authPluginUI === null) {
+      return {};
+    }
+
+    const authData = collection.auth?.data;
+    if (authData !== undefined && isAuthDataRecord(authData)) {
+      return authData;
+    }
+
+    const defaultData = authPluginUI.createDefault();
+    return isAuthDataRecord(defaultData) ? defaultData : {};
   }, [authType, collection.auth?.data, authPluginUI]);
   
   // Handle auth data change
-  const handleAuthDataChange = (newData: any) => {
+  const handleAuthDataChange = (newData: unknown): void => {
     onChange({
       ...collection,
       auth: {
         type: authType,
-        data: newData
+        data: isAuthDataRecord(newData) ? newData : {}
       }
     });
   };
   
   // Render auth form
-  const renderAuthForm = () => {
+  const renderAuthForm = (): JSX.Element => {
     if (authType === 'none') {
       return (
         <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -311,7 +366,7 @@ function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: any) {
       );
     }
 
-    if (!authPluginUI) {
+    if (authPluginUI === null) {
       return (
         <div className="flex-1 flex items-center justify-center text-red-500">
           <div className="text-sm">Auth plugin UI not found for type: {authType}</div>
@@ -339,17 +394,20 @@ function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: any) {
               ...collection,
               auth: value === 'none'
                 ? undefined
-                : {
-                    type: value,
-                    data: newAuthPluginUI?.createDefault ? newAuthPluginUI.createDefault() : {}
-                  }
+                : (() => {
+                    const defaultData = newAuthPluginUI?.createDefault();
+                    return {
+                      type: value,
+                      data: isAuthDataRecord(defaultData) ? defaultData : {}
+                    } satisfies Auth;
+                  })()
             });
           }}
           size="2"
         >
           <Radix.Select.Trigger style={{ width: '100%' }} />
           <Radix.Select.Content>
-            {authOptions.map((type: string) => (
+            {authOptions.map((type) => (
               <Radix.Select.Item key={`auth-${type}`} value={type}>
                 {type === 'none' ? 'No Auth' : type.charAt(0).toUpperCase() + type.slice(1)}
               </Radix.Select.Item>
@@ -367,15 +425,15 @@ function AuthTab({ collection, onChange, uiContext, supportedAuthTypes }: any) {
 }
 
 // Scripts Tab Component for Collection
-function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: any) {
+function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: ScriptsTabProps): JSX.Element {
   const { React, Monaco } = uiContext;
   
   // Get protocol plugin to check for custom events
-  // Protocol-specific events (none defined yet)
-  const protocolEvents: any[] = [];
+  const protocolPlugin = pluginLoader.getProtocolPluginUI(protocol) as ProtocolPluginWithEvents | undefined;
+  const protocolEvents = protocolPlugin?.events ?? [];
   
   type ScriptTypeOption = 'collectionPre' | 'collectionPost' | 'pre' | 'post' | string;
-  const [scriptType, setScriptType] = React.useState('collectionPre');
+  const [scriptType, setScriptType] = React.useState<ScriptTypeOption>('collectionPre');
 
   // Update Monaco IntelliSense context when script type or protocol changes
   React.useEffect(() => {
@@ -395,19 +453,19 @@ function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: any) {
   }, [scriptType, protocol]);
 
   // Get script value based on type
-  const getScriptValue = () => {
-    if (scriptType === 'collectionPre') return collection.collectionPreScript || '';
-    if (scriptType === 'collectionPost') return collection.collectionPostScript || '';
-    if (scriptType === 'pre') return collection.preRequestScript || '';
-    if (scriptType === 'post') return collection.postRequestScript || '';
+  const getScriptValue = (): string => {
+    if (scriptType === 'collectionPre') return collection.collectionPreScript ?? '';
+    if (scriptType === 'collectionPost') return collection.collectionPostScript ?? '';
+    if (scriptType === 'pre') return collection.preRequestScript ?? '';
+    if (scriptType === 'post') return collection.postRequestScript ?? '';
     
     // Protocol event script
-    const eventScript = collection.scripts?.find((s: any) => s.event === scriptType);
-    return eventScript?.script || '';
+    const eventScript = collection.scripts?.find((script) => script.event === scriptType);
+    return eventScript?.script ?? '';
   };
   
   // Update script value
-  const updateScript = (value: string) => {
+  const updateScript = (value: string): void => {
     if (scriptType === 'collectionPre') {
       onChange({ ...collection, collectionPreScript: value });
     } else if (scriptType === 'collectionPost') {
@@ -418,8 +476,8 @@ function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: any) {
       onChange({ ...collection, postRequestScript: value });
     } else {
       // Update protocol event script
-      const scripts = collection.scripts || [];
-      const existingIndex = scripts.findIndex((s: any) => s.event === scriptType);
+      const scripts = [...(collection.scripts ?? [])];
+      const existingIndex = scripts.findIndex((script) => script.event === scriptType);
       
       if (existingIndex >= 0) {
         scripts[existingIndex] = { event: scriptType, script: value };
@@ -492,16 +550,15 @@ function ScriptsTab({ collection, onChange, uiContext, protocol, theme }: any) {
               {protocol.toUpperCase()} Events
             </div>
             <div className="space-y-1">
-              {protocolEvents.map(evt => (
+              {protocolEvents.map((evt) => (
                 <button
                   key={evt.name}
                   onClick={() => setScriptType(evt.name)}
                   className="w-full text-left px-3 py-2 text-sm rounded script-tab-button"
                   data-active={scriptType === evt.name}
-                  title={evt.description}
                   type="button"
                 >
-                  {evt.name + (evt.required ? ' *' : '')}
+                  {evt.name}
                 </button>
               ))}
             </div>

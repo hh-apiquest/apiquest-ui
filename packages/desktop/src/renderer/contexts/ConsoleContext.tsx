@@ -1,8 +1,8 @@
 // ConsoleContext - Manages console messages
 // Layer: Contexts (React layer, wraps ConsoleService)
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import type { ConsoleMessage, ConsoleFilter, ConsoleState } from '../types/console';
+import React, { createContext, useContext, useState, useEffect, type ReactElement, type ReactNode } from 'react';
+import type { ConsoleMessage, ConsoleFilter } from '../types/console';
 import { consoleService } from '../services';
 
 interface ConsoleContextValue {
@@ -22,7 +22,7 @@ interface ConsoleProviderProps {
   children: ReactNode;
 }
 
-export function ConsoleProvider({ children }: ConsoleProviderProps) {
+export function ConsoleProvider({ children }: ConsoleProviderProps): ReactElement {
   const [messages, setMessages] = useState<ConsoleMessage[]>([]);
   const [filter, setFilterState] = useState<ConsoleFilter>(
     consoleService.getState().filter
@@ -30,21 +30,21 @@ export function ConsoleProvider({ children }: ConsoleProviderProps) {
   const [isPaused, setIsPausedState] = useState(false);
 
   // Subscribe to console service events
-  useEffect(() => {
-    const handleMessage = (msg: ConsoleMessage) => {
+  useEffect((): (() => void) => {
+    const handleMessage = (_msg: ConsoleMessage): void => {
       setMessages(consoleService.getMessages());
     };
 
-    const handleCleared = () => {
+    const handleCleared = (): void => {
       setMessages([]);
     };
 
-    const handleFilterChanged = (newFilter: ConsoleFilter) => {
+    const handleFilterChanged = (newFilter: ConsoleFilter): void => {
       setFilterState(newFilter);
       setMessages(consoleService.getMessages()); // Re-filter
     };
 
-    const handlePauseChanged = (paused: boolean) => {
+    const handlePauseChanged = (paused: boolean): void => {
       setIsPausedState(paused);
     };
 
@@ -64,15 +64,15 @@ export function ConsoleProvider({ children }: ConsoleProviderProps) {
     };
   }, []);
 
-  const clear = () => {
+  const clear = (): void => {
     consoleService.clear();
   };
 
-  const setFilter = (newFilter: Partial<ConsoleFilter>) => {
+  const setFilter = (newFilter: Partial<ConsoleFilter>): void => {
     consoleService.setFilter(newFilter);
   };
 
-  const setPaused = (paused: boolean) => {
+  const setPaused = (paused: boolean): void => {
     consoleService.setPaused(paused);
   };
 
@@ -92,9 +92,9 @@ export function ConsoleProvider({ children }: ConsoleProviderProps) {
   );
 }
 
-export function useConsole() {
+export function useConsole(): ConsoleContextValue {
   const context = useContext(ConsoleContext);
-  if (!context) {
+  if (context === null) {
     throw new Error('useConsole must be used within ConsoleProvider');
   }
   return context;

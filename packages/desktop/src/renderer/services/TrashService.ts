@@ -2,7 +2,7 @@
 // Layer: Services (NO React dependencies)
 
 import type { TrashedItem, TrashState, RestoreResult } from '../types/trash';
-import type { Collection } from '../types/request';
+import type { Collection, Folder, Request } from '../types/request';
 import { EventEmitter } from 'eventemitter3';
 
 export class TrashService extends EventEmitter {
@@ -44,7 +44,7 @@ export class TrashService extends EventEmitter {
     collectionName: string,
     requestId: string,
     requestName: string,
-    requestData: any,
+    requestData: Request,
     parentPath?: string
   ): void {
     const item: TrashedItem = {
@@ -73,7 +73,7 @@ export class TrashService extends EventEmitter {
     collectionName: string,
     folderId: string,
     folderName: string,
-    folderData: any,
+    folderData: Folder,
     parentPath?: string
   ): void {
     const item: TrashedItem = {
@@ -180,7 +180,7 @@ export class TrashService extends EventEmitter {
   private checkAutoDelete(): void {
     const now = new Date();
     const expired = this.state.items.filter(item => 
-      item.autoDeleteAt && item.autoDeleteAt <= now
+      item.autoDeleteAt !== undefined && item.autoDeleteAt <= now
     );
 
     for (const item of expired) {
@@ -192,7 +192,9 @@ export class TrashService extends EventEmitter {
    * Schedule auto-delete check
    */
   private scheduleAutoDelete(item: TrashedItem): void {
-    if (!item.autoDeleteAt) return;
+    if (item.autoDeleteAt === undefined) {
+      return;
+    }
 
     const delay = item.autoDeleteAt.getTime() - Date.now();
     
@@ -224,7 +226,7 @@ export class TrashService extends EventEmitter {
    */
   startAutoDeleteCheck(): void {
     // Check every hour
-    setInterval(() => this.checkAutoDelete(), 60 * 60 * 1000);
+    setInterval((): void => this.checkAutoDelete(), 60 * 60 * 1000);
   }
 }
 

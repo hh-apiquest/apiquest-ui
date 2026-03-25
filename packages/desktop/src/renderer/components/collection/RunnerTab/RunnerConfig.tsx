@@ -1,26 +1,27 @@
 // RunnerConfig - Configuration panel for collection runner
+import type { JSX } from 'react';
 import { TextField, Select, Checkbox } from '@radix-ui/themes';
 import { useWorkspace } from '../../../contexts';
+import type { RunnerTabConfig } from '../../../types/runner-tab';
 
 interface RunnerConfigProps {
-  config: {
-    environmentId?: string;
-    iterations: number;
-    delay: number;
-    parallel: boolean;
-    concurrency: number;
-    allowParallel: boolean;
-    maxConcurrency?: number;
-    dataFile?: File | null;
-    persistVariables: boolean;
-    saveResponses: boolean;
-  };
-  onChange: (config: any) => void;
+  config: RunnerTabConfig;
+  onChange: (config: RunnerTabConfig) => void;
 }
 
-export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
+function parsePositiveInteger(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) || parsed < 1 ? fallback : parsed;
+}
+
+function parseNonNegativeInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+export function RunnerConfig({ config, onChange }: RunnerConfigProps): JSX.Element {
   const { workspace } = useWorkspace();
-  const environments = workspace?.environments || [];
+  const environments = workspace?.environments ?? [];
   
   // Disable delay when parallel mode is enabled with concurrency > 1
   const isParallel = config.parallel && config.concurrency > 1;
@@ -35,7 +36,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
           Environment
         </label>
         <Select.Root
-          value={config.environmentId || 'none'}
+          value={config.environmentId ?? 'none'}
           onValueChange={(value) => onChange({
             ...config,
             environmentId: value === 'none' ? undefined : value
@@ -45,7 +46,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
           <Select.Trigger style={{ width: '100%' }} />
           <Select.Content>
             <Select.Item value="none">No Environment</Select.Item>
-            {environments.map(env => (
+            {environments.map((env) => (
               <Select.Item key={env.id} value={env.id}>
                 {env.name}
               </Select.Item>
@@ -65,7 +66,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
           value={config.iterations.toString()}
           onChange={(e) => onChange({
             ...config,
-            iterations: Math.max(1, parseInt(e.target.value) || 1)
+            iterations: parsePositiveInteger(e.target.value, 1)
           })}
           size="2"
         />
@@ -84,7 +85,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
           accept=".csv,.json"
           onChange={(e) => onChange({
             ...config,
-            dataFile: e.target.files?.[0] || null
+            dataFile: e.target.files?.[0] ?? null
           })}
           style={{
             fontSize: '13px',
@@ -111,7 +112,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
           value={config.delay.toString()}
           onChange={(e) => onChange({
             ...config,
-            delay: Math.max(0, parseInt(e.target.value) || 0)
+            delay: parseNonNegativeInteger(e.target.value)
           })}
           size="2"
           placeholder="0"
@@ -125,7 +126,7 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
       </div>
 
       {/* Parallel Execution - only show if collection allows */}
-      {config.allowParallel && (
+      {config.allowParallel === true && (
         <>
           <div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -154,17 +155,18 @@ export function RunnerConfig({ config, onChange }: RunnerConfigProps) {
                 max={config.maxConcurrency}
                 value={config.concurrency.toString()}
                 onChange={(e) => {
-                  const value = parseInt(e.target.value) || 1;
+                  const value = parsePositiveInteger(e.target.value, 1);
+                  const maxConcurrency = config.maxConcurrency;
                   onChange({
                     ...config,
-                    concurrency: config.maxConcurrency ? Math.min(Math.max(1, value), config.maxConcurrency) : Math.max(1, value)
+                    concurrency: maxConcurrency !== undefined ? Math.min(value, maxConcurrency) : value
                   });
                 }}
                 size="2"
                 placeholder="1"
               />
               <p style={{ fontSize: '11px', color: 'var(--gray-9)', marginTop: '4px' }}>
-                {config.maxConcurrency
+                {config.maxConcurrency !== undefined
                   ? `Number of parallel requests (max: ${config.maxConcurrency})`
                   : 'Number of parallel requests'}
               </p>

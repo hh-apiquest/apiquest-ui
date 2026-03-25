@@ -1,36 +1,46 @@
 // ResultsSummary - Display collection run results with expandable request details
-import { useState } from 'react';
+import { useState, type JSX } from 'react';
 import { Badge } from '@radix-ui/themes';
 import { ChevronDownIcon, ChevronRightIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 
+type ResultSummaryTest = {
+  name: string;
+  passed: boolean;
+  error?: string;
+};
+
+type ResultSummaryRequest = {
+  id: string;
+  name: string;
+  status: 'success' | 'failed';
+  duration: number;
+  tests?: ResultSummaryTest[];
+};
+
+type ResultSummary = {
+  success: boolean;
+  message?: string;
+  error?: string;
+  totalRequests: number;
+  executed: number;
+  passed: number;
+  failed: number;
+  duration: number;
+  requests?: ResultSummaryRequest[];
+};
+
 interface ResultsSummaryProps {
-  results: {
-    success: boolean;
-    message?: string;
-    error?: string;
-    totalRequests: number;
-    executed: number;
-    passed: number;
-    failed: number;
-    duration: number;
-    requests?: Array<{
-      id: string;
-      name: string;
-      status: 'success' | 'failed';
-      duration: number;
-      tests?: Array<{
-        name: string;
-        passed: boolean;
-        error?: string;
-      }>;
-    }>;
-  };
+  results: ResultSummary;
 }
 
-export function ResultsSummary({ results }: ResultsSummaryProps) {
+function hasTests(request: ResultSummaryRequest): boolean {
+  return request.tests !== undefined && request.tests.length > 0;
+}
+
+export function ResultsSummary({ results }: ResultsSummaryProps): JSX.Element {
   const [expandedRequests, setExpandedRequests] = useState<Set<string>>(new Set());
 
-  const toggleRequest = (requestId: string) => {
+  const toggleRequest = (requestId: string): void => {
     const newExpanded = new Set(expandedRequests);
     if (newExpanded.has(requestId)) {
       newExpanded.delete(requestId);
@@ -71,20 +81,20 @@ export function ResultsSummary({ results }: ResultsSummaryProps) {
         </div>
         <div>
           <div style={{ fontSize: '11px', color: 'var(--gray-10)', marginBottom: '4px' }}>Requests</div>
-          <div style={{ fontSize: '14px', fontWeight: 600 }}>{results.executed || 0} / {results.totalRequests}</div>
+          <div style={{ fontSize: '14px', fontWeight: 600 }}>{results.executed} / {results.totalRequests}</div>
         </div>
         <div>
           <div style={{ fontSize: '11px', color: 'var(--gray-10)', marginBottom: '4px' }}>Tests</div>
           <div style={{ fontSize: '14px', fontWeight: 600 }}>
-            <span style={{ color: 'var(--green-9)' }}>{results.passed || 0}</span>
+            <span style={{ color: 'var(--green-9)' }}>{results.passed}</span>
             {' / '}
-            <span style={{ color: 'var(--red-9)' }}>{results.failed || 0}</span>
+            <span style={{ color: 'var(--red-9)' }}>{results.failed}</span>
           </div>
         </div>
       </div>
 
       {/* Error Message */}
-      {results.error && (
+      {results.error !== undefined && results.error !== '' && (
         <div style={{
           padding: '12px',
           backgroundColor: 'var(--red-2)',
@@ -99,7 +109,7 @@ export function ResultsSummary({ results }: ResultsSummaryProps) {
       )}
 
       {/* Success Message (placeholder) */}
-      {results.message && !results.error && (
+      {results.message !== undefined && results.message !== '' && (results.error === undefined || results.error === '') && (
         <div style={{
           padding: '12px',
           backgroundColor: 'var(--blue-2)',
@@ -113,36 +123,44 @@ export function ResultsSummary({ results }: ResultsSummaryProps) {
       )}
 
       {/* Request Details */}
-      {results.requests && results.requests.length > 0 && (
+      {results.requests !== undefined && results.requests.length > 0 && (
         <div style={{ borderTop: '1px solid var(--gray-6)', paddingTop: '12px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--gray-11)' }}>
             Request Details
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {results.requests.map(request => {
+            {results.requests.map((request) => {
               const isExpanded = expandedRequests.has(request.id);
-              const hasTests = request.tests && request.tests.length > 0;
-              
+              const requestHasTests = hasTests(request);
+               
               return (
                 <div key={request.id} style={{ border: '1px solid var(--gray-6)', borderRadius: '4px', overflow: 'hidden' }}>
                   <div
-                    onClick={() => hasTests && toggleRequest(request.id)}
+                    onClick={() => {
+                      if (requestHasTests) {
+                        toggleRequest(request.id);
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
                       padding: '8px 12px',
-                      cursor: hasTests ? 'pointer' : 'default',
+                      cursor: requestHasTests ? 'pointer' : 'default',
                       backgroundColor: isExpanded ? 'var(--gray-3)' : 'transparent'
                     }}
                     onMouseEnter={(e) => {
-                      if (hasTests) e.currentTarget.style.backgroundColor = 'var(--gray-3)';
+                      if (requestHasTests) {
+                        e.currentTarget.style.backgroundColor = 'var(--gray-3)';
+                      }
                     }}
                     onMouseLeave={(e) => {
-                      if (hasTests && !isExpanded) e.currentTarget.style.backgroundColor = 'transparent';
+                      if (requestHasTests && !isExpanded) {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                      }
                     }}
                   >
-                    {hasTests ? (
+                    {requestHasTests ? (
                       isExpanded ? (
                         <ChevronDownIcon className="w-4 h-4" style={{ color: 'var(--gray-10)' }} />
                       ) : (
@@ -161,14 +179,14 @@ export function ResultsSummary({ results }: ResultsSummaryProps) {
                     <span style={{ flex: 1, fontSize: '13px' }}>{request.name}</span>
                     <span style={{ fontSize: '12px', color: 'var(--gray-10)' }}>{request.duration}ms</span>
                     
-                    {hasTests && request.tests && (
-                      <Badge size="1" color={request.tests.every(t => t.passed) ? 'green' : 'red'}>
-                        {request.tests.filter(t => t.passed).length}/{request.tests.length}
+                    {requestHasTests && request.tests !== undefined && (
+                      <Badge size="1" color={request.tests.every((test) => test.passed) ? 'green' : 'red'}>
+                        {request.tests.filter((test) => test.passed).length}/{request.tests.length}
                       </Badge>
                     )}
                   </div>
-                  
-                  {isExpanded && hasTests && request.tests && (
+                   
+                  {isExpanded && requestHasTests && request.tests !== undefined && (
                     <div style={{ borderTop: '1px solid var(--gray-6)', padding: '8px 12px 8px 44px', backgroundColor: 'var(--gray-2)' }}>
                       {request.tests.map((test, idx) => (
                         <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', padding: '4px 0' }}>
@@ -181,7 +199,7 @@ export function ResultsSummary({ results }: ResultsSummaryProps) {
                             <div style={{ color: test.passed ? 'var(--green-11)' : 'var(--red-11)' }}>
                               {test.name}
                             </div>
-                            {test.error && (
+                            {test.error !== undefined && test.error !== '' && (
                               <div style={{ fontSize: '11px', color: 'var(--red-10)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
                                 {test.error}
                               </div>

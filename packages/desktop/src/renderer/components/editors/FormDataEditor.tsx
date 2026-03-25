@@ -6,42 +6,26 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import { TextField } from '@radix-ui/themes';
 import { TrashIcon } from '@heroicons/react/24/outline';
+import type { FormDataEntry } from '@apiquest/plugin-ui-types';
 
 export interface FormDataEditorProps {
-  formData: Array<{
-    key: string;
-    value: string;
-    type: 'text' | 'binary';
-    disabled?: boolean;
-    description?: string;
-  }>;
-  onChange: (formData: Array<{
-    key: string;
-    value: string;
-    type: 'text' | 'binary';
-    disabled?: boolean;
-    description?: string;
-  }>) => void;
+  formData: FormDataEntry[];
+  onChange: (formData: FormDataEntry[]) => void;
 }
 
-type FormDataRow = {
-  key: string;
-  value: string;
-  type: 'text' | 'binary';
-  disabled?: boolean;
-  description?: string;
-};
+type FormDataRow = FormDataEntry;
 
-export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
+export function FormDataEditor({ formData, onChange }: FormDataEditorProps): React.ReactElement {
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
 
-  useEffect(() => {
-    if (pendingFocus.current) {
-      const { index, field } = pendingFocus.current;
+  useEffect((): void => {
+    const pending = pendingFocus.current;
+    if (pending !== null) {
+      const { index, field } = pending;
       const el = inputRefs.current.get(`${index}-${field}`);
-      if (el) {
+      if (el !== undefined) {
         el.focus();
         el.setSelectionRange(el.value.length, el.value.length);
       }
@@ -49,12 +33,15 @@ export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
     }
   }, [formData.length]);
 
-  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
-    if (el) inputRefs.current.set(`${index}-${field}`, el);
-    else inputRefs.current.delete(`${index}-${field}`);
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null): void => {
+    if (el !== null) {
+      inputRefs.current.set(`${index}-${field}`, el);
+    } else {
+      inputRefs.current.delete(`${index}-${field}`);
+    }
   };
 
-  const handleChange = (index: number, field: 'key' | 'value' | 'description' | 'type', value: string) => {
+  const handleChange = (index: number, field: 'key' | 'value' | 'description' | 'type', value: string): void => {
     const next = [...formData];
     if (index >= next.length) {
       next.push({
@@ -66,21 +53,31 @@ export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
       });
       pendingFocus.current = {
         index: next.length - 1,
-        field: field === 'description' || field === 'type' ? 'key' : field as 'key' | 'value',
+        field: field === 'description' || field === 'type' ? 'key' : field,
       };
     } else {
-      next[index] = { ...next[index], [field]: value } as FormDataRow;
+      const currentRow = next[index];
+      if (currentRow === undefined) {
+        return;
+      }
+
+      next[index] = { ...currentRow, [field]: value };
     }
     onChange(next);
   };
 
-  const handleToggle = (index: number) => {
+  const handleToggle = (index: number): void => {
     const next = [...formData];
-    next[index] = { ...next[index], disabled: !next[index].disabled };
+    const currentRow = next[index];
+    if (currentRow === undefined) {
+      return;
+    }
+
+    next[index] = { ...currentRow, disabled: currentRow.disabled !== true };
     onChange(next);
   };
 
-  const handleDelete = (index: number) => {
+  const handleDelete = (index: number): void => {
     onChange(formData.filter((_, i) => i !== index));
   };
 
@@ -163,7 +160,7 @@ export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
           {displayRows.map((row, index) => {
             const isEmptyRow = index === formData.length;
             const isActive = isEmptyRow && focusedRow === index;
-            const isEnabled = !row.disabled;
+            const isEnabled = row.disabled !== true;
             const isDisabled = !isEnabled && !isEmptyRow;
 
             const rowKey = isEmptyRow ? 'add-row' : `fd-row-${index}`;
@@ -238,7 +235,7 @@ export function FormDataEditor({ formData, onChange }: FormDataEditorProps) {
                 <td>
                   <TextField.Root
                     size="1"
-                    value={row.description || ''}
+                    value={row.description ?? ''}
                     onChange={(e) => handleChange(index, 'description', e.target.value)}
                     onFocus={() => setFocusedRow(index)}
                     onBlur={() => setFocusedRow(null)}

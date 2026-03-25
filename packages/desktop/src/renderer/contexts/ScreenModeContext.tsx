@@ -1,5 +1,5 @@
 // ScreenModeContext - Manages which full-screen mode is active (request-editor vs workspace-manager vs settings)
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactElement, type ReactNode } from 'react';
 
 export type ScreenMode = 'request-editor' | 'workspace-manager' | 'settings';
 export type SettingsTab = 'general' | 'plugins' | 'importers' | 'ai' | 'tools' | 'appearance' | 'shortcuts';
@@ -12,12 +12,12 @@ type ScreenModeContextType = {
 
 const ScreenModeContext = createContext<ScreenModeContextType | undefined>(undefined);
 
-export function ScreenModeProvider({ children }: { children: ReactNode }) {
+export function ScreenModeProvider({ children }: { children: ReactNode }): ReactElement {
   const [mode, setModeState] = useState<ScreenMode>('request-editor');
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general');
 
-  const setMode = (newMode: ScreenMode, settingsTab?: SettingsTab) => {
-    if (newMode === 'settings' && settingsTab) {
+  const setMode = (newMode: ScreenMode, settingsTab?: SettingsTab): void => {
+    if (newMode === 'settings' && settingsTab !== undefined) {
       setSettingsInitialTab(settingsTab);
     }
     setModeState(newMode);
@@ -30,9 +30,9 @@ export function ScreenModeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useScreenMode() {
+export function useScreenMode(): ScreenModeContextType {
   const context = useContext(ScreenModeContext);
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useScreenMode must be used within ScreenModeProvider');
   }
   return context;

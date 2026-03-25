@@ -1,5 +1,6 @@
 import { loader } from '@monaco-editor/react';
 import type { ScriptIntellisense, ScriptIntellisenseContext } from '@apiquest/plugin-ui-types';
+import type * as MonacoNamespace from 'monaco-editor';
 
 // Base quest global declarations — embedded at build time by Vite ?raw
 import baseDeclarations from '@apiquest/fracture/dist/scriptDeclarations.d.ts?raw';
@@ -19,6 +20,8 @@ interface BaseDeclarationSegments {
   preRequestHints: string;
 }
 
+type MonacoEditorNamespace = typeof MonacoNamespace;
+
 function splitBaseDeclarations(raw: string): BaseDeclarationSegments {
   const testSignatures = [
     'test(name: string, fn: () => void | Promise<void>): void;',
@@ -32,7 +35,7 @@ function splitBaseDeclarations(raw: string): BaseDeclarationSegments {
   const questBlockRegex = /declare const quest:\s*\{[\s\S]*?\n\};/;
   const questBlock = raw.match(questBlockRegex)?.[0];
 
-  if (!questBlock) {
+  if (questBlock === undefined) {
     // Safe fallback: keep existing behavior if format unexpectedly changes.
     return { core: raw, tests: '', preRequestHints: '' };
   }
@@ -87,29 +90,31 @@ export class ScriptIntellisenseManager {
   private readonly baseSegments = splitBaseDeclarations(baseDeclarations);
 
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    if (this.initialized) {
+      return;
+    }
 
     try {
-      const monaco = await loader.init();
+      const monaco = await loader.init() as MonacoEditorNamespace;
 
       // Configure JavaScript IntelliSense mode for script editors
-      monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+      monaco.typescript.javascriptDefaults.setCompilerOptions({
         allowNonTsExtensions: true,
-        target: monaco.languages.typescript.ScriptTarget.ES2020,
+        target: monaco.typescript.ScriptTarget.ES2020,
         lib: ['es2020'],
         noSemanticValidation: false,
         noSyntaxValidation: false,
       });
 
       // Register base quest globals — always present regardless of protocol
-      const baseLib = monaco.languages.typescript.javascriptDefaults.addExtraLib(
+      const baseLib = monaco.typescript.javascriptDefaults.addExtraLib(
         this.baseSegments.core,
         'ts:quest-base-core.d.ts'
       );
       this.baseLibs.push(baseLib);
 
       this.initialized = true;
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[ScriptIntellisense] Failed to initialize:', error);
     }
   }
@@ -129,43 +134,45 @@ export class ScriptIntellisenseManager {
   ): void {
     this.disposeProtocolLibs();
 
-    loader.init().then((monaco) => {
+    void loader.init().then((monacoInstance) => {
+      const monaco = monacoInstance as MonacoEditorNamespace;
+
       if (this.shouldEnableTestApi(context, options)) {
         try {
-          const testLib = monaco.languages.typescript.javascriptDefaults.addExtraLib(
+          const testLib = monaco.typescript.javascriptDefaults.addExtraLib(
             this.baseSegments.tests,
             'ts:quest-base-tests.d.ts'
           );
           this.protocolLibs.push(testLib);
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('[ScriptIntellisense] Failed to register base tests lib:', error);
         }
       }
 
       if (this.shouldEnablePreRequestHintApi(context, options)) {
         try {
-          const preRequestHintsLib = monaco.languages.typescript.javascriptDefaults.addExtraLib(
+          const preRequestHintsLib = monaco.typescript.javascriptDefaults.addExtraLib(
             this.baseSegments.preRequestHints,
             'ts:quest-base-pre-request-hints.d.ts'
           );
           this.protocolLibs.push(preRequestHintsLib);
-        } catch (error) {
+        } catch (error: unknown) {
           console.error('[ScriptIntellisense] Failed to register base pre-request hints lib:', error);
         }
       }
 
       for (const contribution of contributions) {
         try {
-          const lib = monaco.languages.typescript.javascriptDefaults.addExtraLib(
+          const lib = monaco.typescript.javascriptDefaults.addExtraLib(
             contribution.content,
             contribution.uri
           );
           this.protocolLibs.push(lib);
-        } catch (error) {
+        } catch (error: unknown) {
           console.error(`[ScriptIntellisense] Failed to register lib ${contribution.uri}:`, error);
         }
       }
-    }).catch((error) => {
+    }).catch((error: unknown) => {
       console.error('[ScriptIntellisense] Monaco init failed during setContext:', error);
     });
   }

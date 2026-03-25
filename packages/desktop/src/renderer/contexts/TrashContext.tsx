@@ -1,9 +1,9 @@
 // TrashContext - Manages trash/soft-delete
 // Layer: Contexts (React layer, wraps TrashService)
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, type ReactElement, type ReactNode } from 'react';
 import type { TrashedItem, RestoreResult } from '../types/trash';
-import type { Collection } from '../types/request';
+import type { Collection, Folder, Request } from '../types/request';
 import { trashService } from '../services';
 
 interface TrashContextValue {
@@ -12,8 +12,8 @@ interface TrashContextValue {
   
   // Actions
   deleteCollection: (collectionId: string, name: string, data: Collection) => void;
-  deleteRequest: (collectionId: string, collectionName: string, requestId: string, requestName: string, data: any, parentPath?: string) => void;
-  deleteFolder: (collectionId: string, collectionName: string, folderId: string, folderName: string, data: any, parentPath?: string) => void;
+  deleteRequest: (collectionId: string, collectionName: string, requestId: string, requestName: string, data: Request, parentPath?: string) => void;
+  deleteFolder: (collectionId: string, collectionName: string, folderId: string, folderName: string, data: Folder, parentPath?: string) => void;
   restore: (itemId: string) => RestoreResult;
   permanentlyDelete: (itemId: string) => boolean;
   emptyTrash: () => number;
@@ -29,17 +29,17 @@ interface TrashProviderProps {
   children: ReactNode;
 }
 
-export function TrashProvider({ children }: TrashProviderProps) {
+export function TrashProvider({ children }: TrashProviderProps): ReactElement {
   const [items, setItems] = useState<TrashedItem[]>([]);
   const [autoDeleteDays, setAutoDeleteDaysState] = useState(30);
 
   // Subscribe to trash service events
-  useEffect(() => {
-    const updateItems = () => {
+  useEffect((): (() => void) => {
+    const updateItems = (): void => {
       setItems(trashService.getItems());
     };
 
-    const handleAutoDeleteDaysChanged = (days: number) => {
+    const handleAutoDeleteDaysChanged = (days: number): void => {
       setAutoDeleteDaysState(days);
     };
 
@@ -65,7 +65,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
     };
   }, []);
 
-  const deleteCollection = (collectionId: string, name: string, data: Collection) => {
+  const deleteCollection = (collectionId: string, name: string, data: Collection): void => {
     trashService.deleteCollection(collectionId, name, data);
   };
 
@@ -74,9 +74,9 @@ export function TrashProvider({ children }: TrashProviderProps) {
     collectionName: string,
     requestId: string,
     requestName: string,
-    data: any,
+    data: Request,
     parentPath?: string
-  ) => {
+  ): void => {
     trashService.deleteRequest(collectionId, collectionName, requestId, requestName, data, parentPath);
   };
 
@@ -85,9 +85,9 @@ export function TrashProvider({ children }: TrashProviderProps) {
     collectionName: string,
     folderId: string,
     folderName: string,
-    data: any,
+    data: Folder,
     parentPath?: string
-  ) => {
+  ): void => {
     trashService.deleteFolder(collectionId, collectionName, folderId, folderName, data, parentPath);
   };
 
@@ -103,7 +103,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
     return trashService.emptyTrash();
   };
 
-  const setAutoDeleteDays = (days: number) => {
+  const setAutoDeleteDays = (days: number): void => {
     trashService.setAutoDeleteDays(days);
   };
 
@@ -131,9 +131,9 @@ export function TrashProvider({ children }: TrashProviderProps) {
   );
 }
 
-export function useTrash() {
+export function useTrash(): TrashContextValue {
   const context = useContext(TrashContext);
-  if (!context) {
+  if (context === null) {
     throw new Error('useTrash must be used within TrashProvider');
   }
   return context;

@@ -1,37 +1,64 @@
 // RequestList - Selectable tree of requests and folders for collection runner
-import { useState} from 'react';
+import { useState, type JSX } from 'react';
 import { Checkbox } from '@radix-ui/themes';
 import { ChevronDownIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { RequestMetadataIcons } from '../../shared/RequestMetadataIcons';
+import type { RunnerCollection, RunnerCollectionItem } from '../../../types/runner-tab';
+
+type FolderCounts = {
+  total: number;
+  selected: number;
+};
+
+function isFolderItem(item: RunnerCollectionItem): item is Extract<RunnerCollectionItem, { type: 'folder' }> {
+  return item.type === 'folder';
+}
+
+function sortCollectionItems(a: RunnerCollectionItem, b: RunnerCollectionItem): number {
+  const aIsFolder = isFolderItem(a);
+  const bIsFolder = isFolderItem(b);
+
+  if (aIsFolder && !bIsFolder) {
+    return -1;
+  }
+
+  if (!aIsFolder && bIsFolder) {
+    return 1;
+  }
+
+  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+}
 
 interface RequestListProps {
-  collection: any;
+  collection: RunnerCollection;
   selectedRequests: string[];
   onSelectionChange: (selected: string[]) => void;
   isRunning: boolean;
 }
 
-export function RequestList({ collection, selectedRequests, onSelectionChange, isRunning }: RequestListProps) {
+export function RequestList({ collection, selectedRequests, onSelectionChange, isRunning }: RequestListProps): JSX.Element {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
   // Get all request IDs from collection (recursive)
-  const getAllRequestIds = (items: any[]): string[] => {
+  const getAllRequestIds = (items: RunnerCollectionItem[]): string[] => {
     const ids: string[] = [];
+
     for (const item of items) {
-      if (item.type === 'folder' && item.items) {
+      if (isFolderItem(item)) {
         ids.push(...getAllRequestIds(item.items));
-      } else if (item.type === 'request' || item.data) {
+      } else {
         ids.push(item.id);
       }
     }
+
     return ids;
   };
 
-  const allRequestIds = getAllRequestIds(collection.items || []);
-  const allSelected = allRequestIds.length > 0 && allRequestIds.every(id => selectedRequests.includes(id));
+  const allRequestIds = getAllRequestIds(collection.items);
+  const allSelected = allRequestIds.length > 0 && allRequestIds.every((id) => selectedRequests.includes(id));
   const someSelected = selectedRequests.length > 0 && selectedRequests.length < allRequestIds.length;
 
-  const toggleSelectAll = () => {
+  const toggleSelectAll = (): void => {
     if (allSelected) {
       onSelectionChange([]);
     } else {
@@ -39,15 +66,15 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
     }
   };
 
-  const toggleRequest = (requestId: string) => {
+  const toggleRequest = (requestId: string): void => {
     if (selectedRequests.includes(requestId)) {
-      onSelectionChange(selectedRequests.filter(id => id !== requestId));
+      onSelectionChange(selectedRequests.filter((id) => id !== requestId));
     } else {
       onSelectionChange([...selectedRequests, requestId]);
     }
   };
 
-  const toggleFolder = (folderId: string) => {
+  const toggleFolder = (folderId: string): void => {
     const newExpanded = new Set(expandedFolders);
     if (newExpanded.has(folderId)) {
       newExpanded.delete(folderId);
@@ -58,16 +85,16 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
   };
 
   // Get counts for folder (including nested folders)
-  const getFolderCounts = (items: any[]): { total: number, selected: number } => {
+  const getFolderCounts = (items: RunnerCollectionItem[]): FolderCounts => {
     let total = 0;
     let selected = 0;
     
     for (const item of items) {
-      if (item.type === 'folder' && item.items) {
+      if (isFolderItem(item)) {
         const counts = getFolderCounts(item.items);
         total += counts.total;
         selected += counts.selected;
-      } else if (item.type === 'request' ||  item.data) {
+      } else {
         total++;
         if (selectedRequests.includes(item.id)) {
           selected++;
@@ -78,13 +105,12 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
     return { total, selected };
   };
 
-  const renderItem = (item: any, level: number = 0): JSX.Element => {
-    const isFolder = item.type === 'folder' || item.items;
+  const renderItem = (item: RunnerCollectionItem, level = 0): JSX.Element => {
     const isExpanded = expandedFolders.has(item.id);
     const isSelected = selectedRequests.includes(item.id);
 
-    if (isFolder) {
-      const folderCounts = getFolderCounts(item.items || []);
+    if (isFolderItem(item)) {
+      const folderCounts = getFolderCounts(item.items);
       
       return (
         <div key={item.id} style={{ marginLeft: `${level * 16}px` }}>
@@ -133,37 +159,16 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
               {folderCounts.selected}/{folderCounts.total}
             </span>
           </div>
-          {isExpanded && item.items && (
+          {isExpanded && (
             <div>
               {[...item.items]
-                .sort((a: any, b: any) => {
-                  // Folders first
-                  const aIsFolder = !!a.items;
-                  const bIsFolder = !!b.items;
-                  if (aIsFolder && !bIsFolder) return -1;
-                  if (!aIsFolder && bIsFolder) return 1;
-                  // Then alphabetically by name
-                  return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
-                })
-                .map((subItem: any) => renderItem(subItem, level + 1))}
+                .sort(sortCollectionItems)
+                .map((subItem) => renderItem(subItem, level + 1))}
             </div>
           )}
         </div>
       );
     }
-
-    // Request item
-    const method = item.data?.method || 'GET';
-    const methodColors: Record<string, string> = {
-      GET: 'var(--green-9)',
-      POST: 'var(--amber-9)',
-      PUT: 'var(--blue-9)',
-      DELETE: 'var(--red-9)',
-      PATCH: 'var(--purple-9)',
-      HEAD: 'var(--gray-9)',
-      OPTIONS: 'var(--gray-9)'
-    };
-
     return (
       <div
         key={item.id}
@@ -191,15 +196,6 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
           disabled={isRunning}
           onClick={(e) => e.stopPropagation()}
         />
-        <span style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '10px',
-          fontWeight: 700,
-          color: methodColors[method] || 'var(--gray-9)',
-          minWidth: '40px'
-        }}>
-          {method}
-        </span>
         <span style={{ flex: 1 }}>{item.name}</span>
         <RequestMetadataIcons resource={item} />
       </div>
@@ -230,18 +226,10 @@ export function RequestList({ collection, selectedRequests, onSelectionChange, i
       </div>
 
       <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-        {collection.items && collection.items.length > 0 ? (
+        {collection.items.length > 0 ? (
           [...collection.items]
-            .sort((a: any, b: any) => {
-              // Folders first
-              const aIsFolder = !!a.items;
-              const bIsFolder = !!b.items;
-              if (aIsFolder && !bIsFolder) return -1;
-              if (!aIsFolder && bIsFolder) return 1;
-              // Then alphabetically by name
-              return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
-            })
-            .map((item: any) => renderItem(item))
+            .sort(sortCollectionItems)
+            .map((item) => renderItem(item))
         ) : (
           <div style={{ textAlign: 'center', padding: '32px', color: 'var(--gray-9)', fontSize: '13px' }}>
             No requests in this collection
