@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
 import { Text, TextField, Button, Spinner } from '@radix-ui/themes';
 import {
   CheckCircleIcon,
@@ -12,7 +12,7 @@ interface ToolStatus {
   checked: boolean;
 }
 
-export function ToolsSettings() {
+export function ToolsSettings(): ReactElement {
   const { settings, update } = useSettings();
 
   const [gitPath, setGitPath] = React.useState<string>(settings?.tools?.gitPath ?? '');
@@ -21,7 +21,7 @@ export function ToolsSettings() {
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
 
-  const handleCheckTools = async () => {
+  const handleCheckTools = async (): Promise<void> => {
     setChecking(true);
     try {
       const result = await window.quest.plugins.checkTools();
@@ -36,12 +36,12 @@ export function ToolsSettings() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     setSaving(true);
     try {
       await update({ tools: { gitPath: gitPath.trim(), npmPath: settings?.tools?.npmPath ?? '' } });
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setTimeout((): void => setSaved(false), 2000);
     } catch (err) {
       console.error('Failed to save tool settings:', err);
     } finally {
@@ -106,7 +106,9 @@ export function ToolsSettings() {
           <Button
             size="1"
             variant="soft"
-            onClick={handleSave}
+            onClick={() => {
+              void handleSave();
+            }}
             disabled={!isDirty || saving}
           >
             {saving ? <Spinner size="1" /> : null}
@@ -117,7 +119,9 @@ export function ToolsSettings() {
               size="1"
               variant="ghost"
               color="gray"
-              onClick={() => setGitPath(settings?.tools?.gitPath ?? '')}
+              onClick={() => {
+                setGitPath(settings?.tools?.gitPath ?? '');
+              }}
             >
               Discard
             </Button>
@@ -129,13 +133,15 @@ export function ToolsSettings() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', borderTop: '1px solid var(--gray-5)', paddingTop: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text size="2" weight="medium">Tool Status</Text>
-          <Button size="1" variant="soft" onClick={handleCheckTools} disabled={checking}>
+          <Button size="1" variant="soft" onClick={() => {
+            void handleCheckTools();
+          }} disabled={checking}>
             {checking ? <Spinner size="1" /> : null}
             {checking ? 'Checking...' : 'Check now'}
           </Button>
         </div>
 
-        {toolStatus && (
+        {toolStatus !== null && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {([toolStatus.npm, toolStatus.git] as ToolStatus[]).map((tool) => (
               <div
@@ -145,18 +151,18 @@ export function ToolsSettings() {
                   alignItems: 'center',
                   gap: '8px',
                   padding: '8px 10px',
-                  background: tool.version ? 'var(--green-3)' : 'var(--red-3)',
-                  border: `1px solid ${tool.version ? 'var(--green-6)' : 'var(--red-6)'}`,
+                    background: tool.version !== null ? 'var(--green-3)' : 'var(--red-3)',
+                    border: `1px solid ${tool.version !== null ? 'var(--green-6)' : 'var(--red-6)'}`,
                   borderRadius: '6px'
                 }}
               >
-                {tool.version ? (
+                {tool.version !== null ? (
                   <CheckCircleIcon style={{ width: '14px', height: '14px', color: 'var(--green-9)', flexShrink: 0 }} />
                 ) : (
                   <XCircleIcon style={{ width: '14px', height: '14px', color: 'var(--red-9)', flexShrink: 0 }} />
                 )}
                 <div style={{ flex: 1 }}>
-                  <Text size="2" weight="medium" style={{ color: tool.version ? 'var(--green-11)' : 'var(--red-11)' }}>
+                    <Text size="2" weight="medium" style={{ color: tool.version !== null ? 'var(--green-11)' : 'var(--red-11)' }}>
                     {tool.label}
                   </Text>
                   <Text size="1" color="gray" style={{ display: 'block' }}>
@@ -168,7 +174,7 @@ export function ToolsSettings() {
           </div>
         )}
 
-        {!toolStatus && (
+        {toolStatus === null && (
           <Text size="1" color="gray">
             Click "Check now" to verify that the required tools are available.
           </Text>

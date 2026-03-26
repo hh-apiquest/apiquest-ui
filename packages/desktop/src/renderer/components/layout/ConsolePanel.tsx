@@ -1,5 +1,5 @@
 // ConsolePanel - Compact bottom panel with Console/Network/Tests tabs
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { LogLevel } from '@apiquest/types';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -7,6 +7,7 @@ import { TrashIcon, ChevronUpIcon, ChevronDownIcon, EllipsisVerticalIcon, CheckI
 import { useConsole, useNetwork } from '../../contexts';
 import { ObjectViewer } from '../shared/ObjectViewer';
 import type { NetworkEntry } from '../../types/network';
+import type { ExecutionEvent } from '../../../types/execution';
 import { buildResponseRaw, buildSummary } from '../../utils/responseAdapters';
 import { pluginLoader } from '../../services';
 import { logLevelToColor, logLevelToLabel } from '../../utils/logLevel';
@@ -16,7 +17,16 @@ interface ConsolePanelProps {
   onToggleMinimize?: () => void;
 }
 
-export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProps = {}) {
+type RequestBodyWithRaw = {
+  mode?: string;
+  raw?: string;
+};
+
+function isRequestBodyWithRaw(value: unknown): value is RequestBodyWithRaw {
+  return typeof value === 'object' && value !== null;
+}
+
+export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProps = {}): ReactElement {
   const { filter, setFilter, clear: clearConsole } = useConsole();
   const { clear: clearNetwork } = useNetwork();
   const [activeTab, setActiveTab] = useState('console');
@@ -29,13 +39,13 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
     []
   );
 
-  const handleTabOrIconClick = () => {
-    if (isMinimized && onToggleMinimize) {
+  const handleTabOrIconClick = (): void => {
+    if (isMinimized === true && onToggleMinimize !== undefined) {
       onToggleMinimize();
     }
   };
 
-  const handleClear = () => {
+  const handleClear = (): void => {
     if (activeTab === 'console') {
       clearConsole();
     } else if (activeTab === 'network') {
@@ -43,9 +53,9 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
     }
   };
 
-  const toggleLevel = (level: LogLevel) => {
+  const toggleLevel = (level: LogLevel): void => {
     const nextLevels = filter.levels.includes(level)
-      ? filter.levels.filter(l => l !== level)
+      ? filter.levels.filter((currentLevel) => currentLevel !== level)
       : [...filter.levels, level];
     setFilter({ levels: nextLevels });
   };
@@ -69,7 +79,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
           >
             Console
           </Tabs.Trigger>
-          {!isMinimized && (
+          {isMinimized !== true && (
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button
@@ -81,7 +91,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
                   <EllipsisVerticalIcon className="w-4 h-4" />
                 </button>
               </DropdownMenu.Trigger>
-              <DropdownMenu.Portal container={document.querySelector('.radix-themes') || document.body}>
+              <DropdownMenu.Portal container={document.querySelector('.radix-themes') ?? document.body}>
                 <DropdownMenu.Content
                   style={{
                     minWidth: 200,
@@ -172,7 +182,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
           <TrashIcon className="w-4 h-4" />
         </button>
         
-        {onToggleMinimize && !isMinimized && (
+        {onToggleMinimize !== undefined && isMinimized !== true && (
           <button
             className="p-1 cursor-pointer border-none bg-transparent"
             style={{ color: 'var(--gray-9)' }}
@@ -184,7 +194,7 @@ export function ConsolePanel({ isMinimized, onToggleMinimize }: ConsolePanelProp
         )}
       </Tabs.List>
 
-      {!isMinimized && (
+      {isMinimized !== true && (
         <>
           <Tabs.Content value="console" className="flex-1 overflow-auto p-2">
             <ConsoleTab
@@ -218,11 +228,11 @@ function ConsoleTab({
   showTimestamps: boolean;
   showLevels: boolean;
   showPrettyJson: boolean;
-}) {
+}): ReactElement {
   const { messages } = useConsole();
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
+  useEffect((): void => {
     if (!autoScroll) return;
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages, autoScroll]);
@@ -248,7 +258,7 @@ function ConsoleTab({
             {showLevels && (
               <span style={{ color: logLevelToColor(msg.level) }}>[{logLevelToLabel(msg.level)}]</span>
             )}
-            {parsedJson ? (
+            {parsedJson !== null ? (
               <ObjectViewer data={parsedJson} />
             ) : (
               <span style={{ color: logLevelToColor(msg.level) }}>{msg.message}</span>
@@ -261,19 +271,19 @@ function ConsoleTab({
   );
 }
 
-function NetworkTab() {
+function NetworkTab(): ReactElement {
   const { entries } = useNetwork();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listWidth, setListWidth] = useState(320);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!selectedId && entries.length > 0) {
+    if (selectedId === null && entries.length > 0) {
       setSelectedId(entries[0].id);
       return;
     }
 
-    if (selectedId && !entries.some(entry => entry.id === selectedId)) {
+    if (selectedId !== null && !entries.some((entry) => entry.id === selectedId)) {
       setSelectedId(entries[0]?.id ?? null);
     }
   }, [entries, selectedId]);
@@ -283,23 +293,23 @@ function NetworkTab() {
     [entries, selectedId]
   );
 
-  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
-  const startResize = (e: React.PointerEvent) => {
+  const startResize = (e: React.PointerEvent): void => {
     e.preventDefault();
     e.stopPropagation();
 
     const startX = e.clientX;
     const startWidth = listWidth;
     const containerRect = containerRef.current?.getBoundingClientRect();
-    const maxWidth = containerRect ? Math.max(240, containerRect.width - 240) : 800;
+    const maxWidth = containerRect !== undefined ? Math.max(240, containerRect.width - 240) : 800;
 
-    const onMove = (ev: PointerEvent) => {
+    const onMove = (ev: PointerEvent): void => {
       const next = clamp(startWidth + (ev.clientX - startX), 220, maxWidth);
       setListWidth(next);
     };
 
-    const onUp = () => {
+    const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -333,12 +343,12 @@ function NetworkTab() {
             const isSelected = entry.id === selectedId;
 
             const protocol = entry.protocol;
-            const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-            const summaryView = entry.responseSummary ?? (entry.request ? buildSummary(entry.request, entry.response, plugin) : null);
+            const plugin = protocol !== undefined && protocol !== '' ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
+            const summaryView = entry.responseSummary ?? (entry.request !== undefined ? buildSummary(entry.request, entry.response, plugin) : null);
             const summaryLabel = summaryView?.statusLabel ?? '';
             const summaryDetail = summaryView?.statusDetail ?? '';
             const statusText = [summaryLabel, summaryDetail].filter(Boolean).join(' ');
-            const SummaryLine = summaryView?.summaryLine || null;
+            const SummaryLine = summaryView?.summaryLine ?? null;
             const fallbackLine = [entry.requestName, url, statusText, duration !== undefined ? `${duration} ms` : '']
               .filter(Boolean)
               .join('  ');
@@ -355,19 +365,19 @@ function NetworkTab() {
                 }}
               >
                 <div className="flex items-center text-xs" style={{ color: 'var(--gray-11)' }}>
-                    {SummaryLine && (entry.request || entry.response) ? (
+                    {SummaryLine !== null && (entry.request !== undefined || entry.response !== undefined) ? (
                       <div className="flex items-center min-w-0 flex-1" style={{ overflow: 'hidden' }}>
                               <SummaryLine
                                 request={entry.request}
                                 response={entry.response}
                                 uiContext={pluginLoader.getUIContext()}
-                                uiState={pluginLoader.getUIContext()}
-                              />
+                                 uiState={{ theme: pluginLoader.getUIContext().theme }}
+                               />
                       </div>
                   ) : (
                     <span className="truncate" title={fallbackLine} style={{ minWidth: 0 }}>
-                      {fallbackLine || entry.requestName || '—'}
-                    </span>
+                       {fallbackLine !== '' ? fallbackLine : (entry.requestName ?? '—')}
+                     </span>
                   )}
                 </div>
               </button>
@@ -379,20 +389,20 @@ function NetworkTab() {
       <div
         className="resize-bar"
         onPointerDown={startResize}
-        style={{ width: '1px', cursor: 'ew-resize', background: 'var(--gray-6)', WebkitAppRegion: 'no-drag' } as any}
+        style={{ width: '1px', cursor: 'ew-resize', background: 'var(--gray-6)', WebkitAppRegion: 'no-drag' } as CSSProperties}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {selectedEntry ? (
+        {selectedEntry !== null ? (
           <>
             <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'var(--gray-6)' }}>
               <div className="flex items-center gap-2 text-xs flex-1 min-w-0">
                 {(() => {
                   const protocol = selectedEntry.protocol;
-                  const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-                  const badge = plugin && selectedEntry.request ? plugin.getRequestBadge(selectedEntry.request) : null;
-                  const badgeColor = badge?.color || 'var(--gray-10)';
-                  const badgeText = badge?.primary || getEntryMethod(selectedEntry);
+                  const plugin = protocol !== undefined && protocol !== '' ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
+                  const badge = plugin !== undefined && selectedEntry.request !== undefined ? plugin.getRequestBadge(selectedEntry.request) : null;
+                  const badgeColor = badge?.color ?? 'var(--gray-10)';
+                  const badgeText = badge?.primary ?? getEntryMethod(selectedEntry);
                   
                   return (
                     <span style={{ color: badgeColor }}>
@@ -432,7 +442,7 @@ function NetworkTab() {
   );
 }
 
-function TestsTab() {
+function TestsTab(): ReactElement {
   return (
     <div className="flex items-center justify-center h-full text-xs" style={{ color: 'var(--gray-9)' }}>
       No test results
@@ -455,17 +465,13 @@ function tryParseJson(message: string): unknown | null {
 
 function getEntryMethod(entry: NetworkEntry): string {
   const method = entry.request?.data?.method as string | undefined;
-  if (!method) return 'REQUEST';
+  if (method === undefined || method === '') return 'REQUEST';
   return String(method).toUpperCase();
 }
 
 function getEntryUrl(entry: NetworkEntry): string {
-  return (
-    (entry.request?.data?.url as string) ||
-    entry.path ||
-    entry.requestName ||
-    ''
-  );
+  const requestUrl = entry.request?.data?.url as string | undefined;
+  return requestUrl ?? entry.path ?? entry.requestName ?? '';
 }
 
 function getEntryStatusLabel(entry: NetworkEntry): string | undefined {
@@ -499,7 +505,7 @@ function getMethodColor(method: string): string {
 }
 
 function getStatusColor(status?: string): string {
-  if (!status) return 'var(--gray-9)';
+  if (status === undefined || status === '') return 'var(--gray-9)';
   
   const numStatus = parseInt(status, 10);
   if (!isNaN(numStatus)) {
@@ -515,7 +521,10 @@ function getStatusColor(status?: string): string {
 }
 
 function getRequestHeaders(entry: NetworkEntry): Record<string, string> {
-  const headers = (entry.request?.data?.headers as Record<string, string>) || {};
+  const headers = entry.request?.data?.headers as Record<string, string> | undefined;
+  if (headers === undefined) {
+    return {};
+  }
   return headers;
 }
 
@@ -526,7 +535,7 @@ function getRequestBody(entry: NetworkEntry): string | undefined {
   if (typeof body === 'string') return body;
 
   if (typeof body === 'object') {
-    const bodyObj = body as any;
+    const bodyObj = isRequestBodyWithRaw(body) ? body : null;
     if (bodyObj?.mode === 'raw' && typeof bodyObj.raw === 'string') {
       return bodyObj.raw;
     }
@@ -542,7 +551,7 @@ function getRequestBody(entry: NetworkEntry): string | undefined {
 }
 
 function formatHeaders(headers?: Record<string, string | string[]>): string[] {
-  if (!headers) return [];
+  if (headers === undefined) return [];
   return Object.entries(headers).map(([key, value]) => {
     if (Array.isArray(value)) {
       return `${key}: ${value.join(', ')}`;
@@ -553,7 +562,7 @@ function formatHeaders(headers?: Record<string, string | string[]>): string[] {
 
 function buildRawRequest(entry: NetworkEntry): string {
   // Protocol-agnostic: show request as JSON
-  if (!entry.request) return 'No request data';
+  if (entry.request === undefined) return 'No request data';
   
   try {
     return JSON.stringify(entry.request, null, 2);
@@ -564,7 +573,7 @@ function buildRawRequest(entry: NetworkEntry): string {
 
 function buildRawResponse(entry: NetworkEntry): string {
   // Protocol-agnostic: show response as JSON
-  if (!entry.response) return 'No response data';
+  if (entry.response === undefined) return 'No response data';
   
   try {
     return JSON.stringify(entry.response, null, 2);
@@ -573,13 +582,13 @@ function buildRawResponse(entry: NetworkEntry): string {
   }
 }
 
-function renderPrettyBody(body: string | undefined) {
-  if (!body) {
+function renderPrettyBody(body: string | undefined): ReactElement {
+  if (body === undefined || body === '') {
     return <span style={{ color: 'var(--gray-9)' }}>Empty body</span>;
   }
 
   const parsed = tryParseJson(body);
-  if (parsed) {
+  if (parsed !== null) {
     return <ObjectViewer data={parsed} />;
   }
 
@@ -590,7 +599,7 @@ function renderPrettyBody(body: string | undefined) {
   );
 }
 
-function renderRawEntry(entry: NetworkEntry) {
+function renderRawEntry(entry: NetworkEntry): ReactElement {
   const requestRaw = buildRawRequest(entry);
   const responseRaw = buildRawResponse(entry);
 
@@ -600,22 +609,22 @@ function renderRawEntry(entry: NetworkEntry) {
         <div className="text-[10px] uppercase" style={{ color: 'var(--gray-9)' }}>
           Request
         </div>
-        <pre className="whitespace-pre-wrap">{requestRaw || '—'}</pre>
+        <pre className="whitespace-pre-wrap">{requestRaw !== '' ? requestRaw : '—'}</pre>
       </div>
       <div>
         <div className="text-[10px] uppercase" style={{ color: 'var(--gray-9)' }}>
           Response
         </div>
-        <pre className="whitespace-pre-wrap">{responseRaw || '—'}</pre>
+        <pre className="whitespace-pre-wrap">{responseRaw !== '' ? responseRaw : '—'}</pre>
       </div>
     </div>
   );
 }
 
-function renderPrettyEntry(entry: NetworkEntry) {
+function renderPrettyEntry(entry: NetworkEntry): ReactElement {
   const method = getEntryMethod(entry);
   const url = getEntryUrl(entry);
-  const summaryView = entry.responseSummary ?? (entry.request ? buildSummary(entry.request, entry.response, null) : null);
+  const summaryView = entry.responseSummary ?? (entry.request !== undefined ? buildSummary(entry.request, entry.response, null) : null);
   const status = summaryView?.statusLabel ?? '';
   const statusText = summaryView?.statusDetail ?? '';
   const requestHeaders = getRequestHeaders(entry);
@@ -668,7 +677,7 @@ function renderPrettyEntry(entry: NetworkEntry) {
         </div>
       </div>
 
-      {entry.customEvents && entry.customEvents.length > 0 && (
+      {entry.customEvents !== undefined && entry.customEvents.length > 0 && (
         <div>
           <div className="text-[10px] uppercase" style={{ color: 'var(--gray-9)' }}>
             Events
@@ -693,11 +702,11 @@ function renderPrettyEntry(entry: NetworkEntry) {
  * renderDetailView - Delegate to plugin's detailView component
  * Falls back to JSON if plugin doesn't provide detailView
  */
-function renderDetailView(entry: NetworkEntry) {
+function renderDetailView(entry: NetworkEntry): ReactElement {
   const protocol = entry.protocol;
-  const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
+  const plugin = protocol !== undefined && protocol !== '' ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
   
-  if (!entry.response) {
+  if (entry.response === undefined) {
     return (
       <div className="flex items-center justify-center h-full text-xs" style={{ color: 'var(--gray-9)' }}>
         No response data
@@ -706,11 +715,11 @@ function renderDetailView(entry: NetworkEntry) {
   }
 
   // Get response summary which includes detailView component
-  const summary = entry.request && plugin ? plugin.getSummary(entry.request, entry.response) : null;
+  const summary = entry.request !== undefined && plugin !== undefined ? plugin.getSummary(entry.request, entry.response) : null;
   const DetailView = summary?.detailView;
 
   // If plugin provides detailView, use it
-  if (DetailView) {
+  if (DetailView !== undefined) {
     const uiContext = pluginLoader.getUIContext();
     const uiState = {
       theme: uiContext.theme
@@ -742,7 +751,7 @@ function renderDetailView(entry: NetworkEntry) {
         </div>
         <ObjectViewer data={entry.response} />
       </div>
-      {entry.customEvents && entry.customEvents.length > 0 && (
+      {entry.customEvents !== undefined && entry.customEvents.length > 0 && (
         <div>
           <div className="text-[10px] uppercase mb-2" style={{ color: 'var(--gray-9)' }}>
             Events

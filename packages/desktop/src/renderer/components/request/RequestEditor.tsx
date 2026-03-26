@@ -7,18 +7,71 @@ import { useAutoSave } from '../../hooks/useAutoSave';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { Switch } from '@radix-ui/themes';
-import type { Request, Collection, VariableValue } from '@apiquest/types';
-import type { UITabProps } from '@apiquest/plugin-ui-types';
+import type { Auth, Collection, CollectionItem, Request, VariableValue } from '@apiquest/types';
+import type { UITab, UITabProps } from '@apiquest/plugin-ui-types';
+import type { ProtocolScript } from '@apiquest/types';
 import { ResponseViewer } from '../response/ResponseViewer';
 import { OptionsTab } from './OptionsTab';
 import { resolveInheritedAuth } from '../../utils/authInheritance';
 import { extractVariablePrimitive } from '../../utils/variables';
+import type { ProtocolPluginEventDefinition, ProtocolPluginWithEvents } from '../../types/plugin-loader';
 
 interface RequestEditorProps {
   tab: Tab;
 }
 
-export function RequestEditor({ tab }: RequestEditorProps) {
+interface CollectionDependencyItem {
+  id: string;
+  name: string;
+  type: 'folder' | 'request';
+}
+
+function isRequestItem(item: CollectionItem): item is Request {
+  return item.type === 'request';
+}
+
+function findRequestInItems(items: CollectionItem[], requestId: string): Request | null {
+  for (const item of items) {
+    if (isRequestItem(item) && item.id === requestId) {
+      return item;
+    }
+
+    if (item.type === 'folder') {
+      const found = findRequestInItems(item.items, requestId);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractCollectionItems(items: CollectionItem[]): CollectionDependencyItem[] {
+  const allItems: CollectionDependencyItem[] = [];
+
+  for (const item of items) {
+    if (item.type === 'request' || item.type === 'folder') {
+      allItems.push({ id: item.id, name: item.name, type: item.type });
+    }
+
+    if (item.type === 'folder') {
+      allItems.push(...extractCollectionItems(item.items));
+    }
+  }
+
+  return allItems;
+}
+
+function isAuth(value: unknown): value is Auth {
+  return typeof value === 'object' && value !== null && 'type' in value;
+}
+
+function isRequestDraft(value: unknown): value is Request {
+  return typeof value === 'object' && value !== null && 'type' in value && 'data' in value && 'id' in value;
+}
+
+export function RequestEditor({ tab }: RequestEditorProps): React.ReactElement {
   const { saveResourceState, clearResourceState, getResourceState, updateTabExecution, updateTabUIState, clearTemporaryFlag, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { setDirty, setMetadata } = useTabStatusActions();
   const { registerSaveHandler, registerDiscardHandler, registerFlushHandler } = useTabEditorBridge();
@@ -31,7 +84,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   // and resetting hasPendingSaveRef.current — meaning flush() would always be a no-op.
   const requestRef = useRef<Request | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
-  const [collectionItems, setCollectionItems] = useState<Array<{ id: string; name: string; type: 'folder' | 'request' }>>([]);
+  const [collectionItems, setCollectionItems] = useState<CollectionDependencyItem[]>([]);
   
   const uiState = useMemo(() => ({
     theme: actualTheme
@@ -43,10 +96,11 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   const [activeSubTab, setActiveSubTab] = useState<string | null>(null);
   
   // Check if request has execution control (dependencies or conditions)
-  const hasExecutionControl = useMemo(() =>
-    (request?.dependsOn && request.dependsOn.length > 0) || !!request?.condition,
-    [request?.dependsOn, request?.condition]
-  );
+  const hasExecutionControl = useMemo(() => {
+    const hasDependencies = request?.dependsOn !== undefined && request.dependsOn.length > 0;
+    const hasCondition = request?.condition !== undefined && request.condition !== '';
+    return hasDependencies || hasCondition;
+  }, [request?.dependsOn, request?.condition]);
   
   const execution = tab.execution;
   const response = execution?.result ?? null;
@@ -54,9 +108,9 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   const isSending = execution?.status === 'running';
 
   console.log('[RequestEditor] Render - execution state:', {
-    hasExecution: !!execution,
+    hasExecution: execution !== undefined,
     status: execution?.status,
-    hasResult: !!response,
+    hasResult: response !== null,
     eventsCount: events.length,
     executionId: execution?.executionId
   });
@@ -69,7 +123,13 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     [tab.protocol]
   );
 
-  const protocolTabs = useMemo(() => (pluginUI?.getRequestTabs ? pluginUI.getRequestTabs() : []), [pluginUI]);
+  const protocolTabs = useMemo(() => {
+    if (pluginUI?.getRequestTabs === undefined) {
+      return [];
+    }
+
+    return pluginUI.getRequestTabs();
+  }, [pluginUI]);
 
   const authTabComponent = useCallback(
     (props: UITabProps) => (
@@ -95,13 +155,13 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         allItems={collectionItems}
         currentItemId={tab.resourceId}
         resourceType="request"
-        collection={collection || undefined}
+        collection={collection ?? undefined}
       />
     ),
     [collectionItems, tab.resourceId, collection]
   );
 
-  const allTabs = useMemo(() => {
+  const allTabs = useMemo<UITab[]>(() => {
     const authTab = {
       id: 'auth',
       label: 'Auth',
@@ -123,18 +183,20 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       component: optionsTabComponent
     };
 
-    return [authTab, ...protocolTabs, scriptsTab, optionsTab].sort((a, b) => (a.position || 50) - (b.position || 50));
+    return [authTab, ...protocolTabs, scriptsTab, optionsTab].sort((a, b) => (a.position ?? 50) - (b.position ?? 50));
   }, [authTabComponent, scriptsTabComponent, optionsTabComponent, protocolTabs]);
 
   // Sync local state with tab.uiState on tab changes
   useEffect(() => {
-    const newActiveSubTab = tab.uiState?.activeSubTab || (allTabs[0]?.id ?? null);
+    const newActiveSubTab = tab.uiState?.activeSubTab ?? allTabs[0]?.id ?? null;
     setActiveSubTab(newActiveSubTab);
   }, [tab.id, tab.uiState?.activeSubTab, allTabs]);
 
   useEffect(() => {
-    const loadRequest = async () => {
-      if (!workspace) return;
+    const loadRequest = async (): Promise<void> => {
+      if (workspace === null) {
+        return;
+      }
       
       try {
         setIsLoading(true);
@@ -142,44 +204,22 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         const loadedCollection = await getCollection(tab.collectionId);
         setCollection(loadedCollection);
         
-        const findRequest = (items: any[]): any => {
-          for (const item of items) {
-            if (item.id === tab.resourceId) return item;
-            if (item.items) {
-              const found = findRequest(item.items);
-              if (found) return found;
-            }
-          }
-          return null;
-        };
-        
-        // Extract all items (folders and requests) from collection for dependencies
-        const extractAllItems = (items: any[]): Array<{ id: string; name: string; type: 'folder' | 'request' }> => {
-          const allItems: Array<{ id: string; name: string; type: 'folder' | 'request' }> = [];
-          for (const item of items) {
-            if (item.type === 'request' || item.type === 'folder') {
-              allItems.push({ id: item.id, name: item.name, type: item.type });
-            }
-            if (item.type === 'folder' && item.items) {
-              allItems.push(...extractAllItems(item.items));
-            }
-          }
-          return allItems;
-        };
-        
-        setCollectionItems(extractAllItems(loadedCollection.items));
-        
-        const baseRequest = findRequest(loadedCollection.items);
-        if (!baseRequest) throw new Error('Request not found');
+        setCollectionItems(extractCollectionItems(loadedCollection.items));
+
+        const baseRequest = findRequestInItems(loadedCollection.items, tab.resourceId);
+        if (baseRequest === null) {
+          throw new Error('Request not found');
+        }
         
         // Primary: in-memory state from a previous tab switch (zero IPC overhead, no races).
         // Secondary: IPC session state (app restart recovery, or first load after restart).
-        const inMemoryState = getTabEditorState(tab.id) as Request | undefined;
+        const inMemoryState = getTabEditorState(tab.id);
+        const draftRequest = isRequestDraft(inMemoryState) ? inMemoryState : undefined;
         
         let finalRequest: Request;
-        if (inMemoryState) {
+        if (draftRequest !== undefined) {
           // Use the in-memory state directly — it is always the most recent version.
-          finalRequest = inMemoryState;
+          finalRequest = draftRequest;
           setDirty(tab.id, true);
         } else {
           const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
@@ -191,13 +231,13 @@ export function RequestEditor({ tab }: RequestEditorProps) {
             name: sessionState?.name ?? baseRequest.name,
             description: sessionState?.description ?? baseRequest.description ?? '',
             data: (sessionState?.data as Record<string, unknown>) ?? (baseRequest.data as Record<string, unknown>) ?? {},
-            auth: sessionState?.auth ?? baseRequest.auth,
+            auth: isAuth(sessionState?.auth) ? sessionState.auth : baseRequest.auth,
             preRequestScript: sessionState?.preRequestScript ?? baseRequest.preRequestScript ?? '',
             postRequestScript: sessionState?.postRequestScript ?? baseRequest.postRequestScript ?? '',
             dependsOn: sessionState?.dependsOn ?? baseRequest.dependsOn,
             condition: sessionState?.condition ?? baseRequest.condition
           };
-          if (sessionState) {
+          if (sessionState !== null) {
             setDirty(tab.id, true);
           }
         }
@@ -205,21 +245,21 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         setRequest(finalRequest);
         
         // Set badge metadata from plugin
-        if (pluginUI) {
+        if (pluginUI !== undefined) {
           const badge = pluginUI.getRequestBadge(finalRequest);
           setMetadata(tab.id, {
             badge,
             description: finalRequest.description
           });
         }
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to load request:', error);
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadRequest();
+    void loadRequest();
   }, [tab.id, tab.resourceId, tab.collectionId]);
 
   // Keep requestRef current so handleAutoSave and the save handler always read the
@@ -232,10 +272,10 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   }, [request]);
 
   useEffect(() => {
-    if (!workspace) return;
+    if (workspace === null) return;
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!requestRef.current) return;
+      if (requestRef.current === null) return;
       const currentRequest = requestRef.current;
       // Strip transient _ui state before persisting to the collection file.
       // The session stores data+_ui together but the collection file must not.
@@ -254,7 +294,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   // It reads requestRef.current to always access the latest data. This stability
   // prevents useAutoSave from resetting its pending-flag on every keystroke.
   const handleAutoSave = useCallback(async () => {
-    if (!workspace || !requestRef.current) return;
+    if (workspace === null || requestRef.current === null) return;
     const currentRequest = requestRef.current;
     
     try {
@@ -280,7 +320,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   const { trigger: triggerAutoSave, flush: flushAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
     delay: 1000,
-    enabled: !!workspace && !!request
+    enabled: workspace !== null && request !== null
   });
 
   useEffect(() => {
@@ -303,7 +343,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     return unregisterFlush;
   }, [registerFlushHandler, tab.id, flushAutoSave]);
 
-  const handleRequestChange = (updatedRequest: Request) => {
+  const handleRequestChange = (updatedRequest: Request): void => {
     setRequest(updatedRequest);
     // Immediately store the updated request in in-memory tab state.
     // This is the primary mechanism for persisting state across tab switches.
@@ -312,12 +352,12 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     setDirty(tab.id, true);
     
     // Make temporary tab permanent when data changes
-    if (tab.isTemporary) {
+    if (tab.isTemporary === true) {
       clearTemporaryFlag(tab.id);
     }
     
     // Update badge metadata from plugin when request changes
-    if (pluginUI) {
+    if (pluginUI !== undefined) {
       const badge = pluginUI.getRequestBadge(updatedRequest);
       setMetadata(tab.id, { badge });
     }
@@ -325,13 +365,13 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     triggerAutoSave();
   };
 
-  const handleSend = async () => {
-    if (!tab.execution) {
+  const handleSend = async (): Promise<void> => {
+    if (tab.execution === undefined) {
       console.error('[RequestEditor] Tab has no execution state, this should not happen');
       return;
     }
 
-    if (!workspace) {
+    if (workspace === null) {
       return;
     }
 
@@ -343,16 +383,16 @@ export function RequestEditor({ tab }: RequestEditorProps) {
           endTime: Date.now(),
           error: 'Request cancelled'
         });
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to cancel request:', error);
       }
       return;
     }
 
-    if (!request) return;
+    if (request === null) return;
 
     // Make temporary tab permanent when sending request
-    if (tab.isTemporary) {
+    if (tab.isTemporary === true) {
       clearTemporaryFlag(tab.id);
     }
 
@@ -371,8 +411,8 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       let collectionVariables: Record<string, VariableValue> = {};
       try {
         const collection = await window.quest.workspace.loadCollection(workspace.id, tab.collectionId);
-        collectionVariables = Object.entries(collection.variables || {}).reduce((acc, [key, value]) => {
-          const primitive = extractVariablePrimitive(value as VariableValue);
+        collectionVariables = Object.entries(collection.variables ?? {}).reduce((acc, [key, value]) => {
+          const primitive = extractVariablePrimitive(value);
           if (primitive !== null) {
             acc[key] = primitive;
           }
@@ -382,15 +422,15 @@ export function RequestEditor({ tab }: RequestEditorProps) {
           collectionId: tab.collectionId,
           variables: collectionVariables
         });
-      } catch (error) {
+      } catch (error: unknown) {
         console.warn('Failed to load collection variables:', error);
       }
 
       let environmentVariables: Record<string, VariableValue> = {};
-      if (activeEnvironment) {
+      if (activeEnvironment !== null) {
         try {
           const env = await loadEnvironment(activeEnvironment.fileName);
-          environmentVariables = Object.entries(env.variables || {}).reduce((acc, [key, value]) => {
+          environmentVariables = Object.entries(env.variables).reduce((acc, [key, value]) => {
             const primitive = extractVariablePrimitive(value);
             if (primitive !== null) {
               acc[key] = primitive;
@@ -401,7 +441,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
             environmentId: activeEnvironment.fileName,
             variables: environmentVariables
           });
-        } catch (error) {
+        } catch (error: unknown) {
           console.warn('Failed to load environment variables:', error);
         }
       }
@@ -409,7 +449,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       let globalVariables: Record<string, VariableValue> = {};
       try {
         const globals = await window.quest.globalVariables.load();
-        globalVariables = Object.entries(globals || {}).reduce((acc, [key, value]) => {
+        globalVariables = Object.entries(globals).reduce((acc, [key, value]) => {
           const primitive = extractVariablePrimitive(value);
           if (primitive !== null) {
             acc[key] = primitive;
@@ -419,13 +459,13 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         console.log('[RequestEditor] Ephemeral variable build: global', {
           variables: globalVariables
         });
-      } catch (error) {
+      } catch (error: unknown) {
         console.warn('Failed to load global variables:', error);
       }
 
       console.log('[RequestEditor] Ephemeral variable build: final payload', {
         collectionId: tab.collectionId,
-        environmentId: activeEnvironment?.fileName || null,
+        environmentId: activeEnvironment?.fileName ?? null,
         variables: {
           collection: collectionVariables,
           environment: environmentVariables,
@@ -440,7 +480,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
 
       const result = await window.quest.runner.runRequest({
         executionId,
-        workspaceId: workspace!.id,
+        workspaceId: workspace.id,
         collectionId: tab.collectionId,
         protocol: tab.protocol,
         request: effectiveRequest,
@@ -459,7 +499,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
         error: undefined
       });
       
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Request failed:', error);
 
       const wasCancelled =
@@ -484,7 +524,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     );
   }
 
-  if (!request) {
+  if (request === null) {
     return (
       <div className="flex items-center justify-center h-full" style={{ color: 'var(--gray-9)' }}>
         Request not found
@@ -492,7 +532,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     );
   }
 
-  if (!pluginUI) {
+  if (pluginUI === undefined) {
     return (
       <div className="flex items-center justify-center h-full" style={{ color: 'var(--gray-9)' }}>
         No plugin found for protocol: {tab.protocol}
@@ -500,21 +540,21 @@ export function RequestEditor({ tab }: RequestEditorProps) {
     );
   }
 
-  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
-  const startResponseResize = (e: React.PointerEvent) => {
+  const startResponseResize = (e: React.PointerEvent): void => {
     e.preventDefault();
     e.stopPropagation();
 
     const rootRect = rootRef.current?.getBoundingClientRect();
-    if (!rootRect) return;
+    if (rootRect === undefined) return;
 
-    const onMove = (ev: PointerEvent) => {
+    const onMove = (ev: PointerEvent): void => {
       const nextHeight = clamp(rootRect.bottom - ev.clientY, 120, Math.max(120, rootRect.height - 150));
       setResponseHeight(nextHeight);
     };
 
-    const onUp = () => {
+    const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -532,7 +572,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
           </div>
 
           <button
-            onClick={handleSend}
+            onClick={() => { void handleSend(); }}
             className="text-sm font-medium rounded border-none cursor-pointer"
             style={{
               flexShrink: 0,
@@ -547,7 +587,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
 
         <div className="flex-1 overflow-hidden min-h-0">
           <Tabs.Root
-            value={activeSubTab || allTabs[0]?.id}
+            value={activeSubTab ?? allTabs[0]?.id}
             onValueChange={(value) => {
               setActiveSubTab(value);
               updateTabUIState(tab.id, { activeSubTab: value });
@@ -563,14 +603,20 @@ export function RequestEditor({ tab }: RequestEditorProps) {
           <Tabs.List className="flex items-center border-b px-4 editor-tabs-list" style={{ borderColor: 'var(--gray-6)', width: '100%' }}>
             <div className="flex items-center flex-1">
               {allTabs
-                .filter(tab => !('visible' in tab) || !tab.visible || tab.visible(request))
-                .map(tab => (
+                .filter((currentTab) => {
+                  if (currentTab.visible === undefined) {
+                    return true;
+                  }
+
+                  return currentTab.visible(request) === true;
+                })
+                .map((currentTab) => (
                   <Tabs.Trigger
-                    key={tab.id}
-                    value={tab.id}
+                    key={currentTab.id}
+                    value={currentTab.id}
                     className="request-tab-trigger px-4 py-2 text-sm font-medium border-none bg-transparent editor-tab-trigger"
                   >
-                    {tab.label}
+                    {currentTab.label}
                   </Tabs.Trigger>
                 ))}
             </div>
@@ -625,7 +671,7 @@ export function RequestEditor({ tab }: RequestEditorProps) {
       <div
         className="resize-bar"
         onPointerDown={startResponseResize}
-        style={{ height:'1px', cursor: 'ns-resize', WebkitAppRegion: 'no-drag' } as any}
+        style={{ height: '1px', cursor: 'ns-resize', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       />
 
       <div className="border-t" style={{ height: responseHeight }}>
@@ -643,11 +689,11 @@ export function RequestEditor({ tab }: RequestEditorProps) {
   );
 }
 
-function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabProps & { protocol: string }) {
+function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabProps & { protocol: string }): React.ReactElement {
   const { React, Monaco } = uiContext;
   const theme = uiState.theme;
-  
-  const protocolEvents: any[] = [];
+  const protocolPlugin = pluginLoader.getProtocolPluginUI(protocol) as ProtocolPluginWithEvents | undefined;
+  const protocolEvents: ProtocolPluginEventDefinition[] = protocolPlugin?.events ?? [];
   
   type ScriptTypeOption = 'pre' | 'post' | string;
   const [scriptType, setScriptType] = React.useState<ScriptTypeOption>('pre');
@@ -668,22 +714,27 @@ function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabPr
     });
   }, [scriptType, protocol]);
   
-  const getScriptValue = () => {
-    if (scriptType === 'pre') return request.preRequestScript || '';
-    if (scriptType === 'post') return request.postRequestScript || '';
-    
-    const eventScript = request.data.scripts?.find(s => s.event === scriptType);
-    return eventScript?.script || '';
+  const getScriptValue = (): string => {
+    if (scriptType === 'pre') {
+      return request.preRequestScript ?? '';
+    }
+
+    if (scriptType === 'post') {
+      return request.postRequestScript ?? '';
+    }
+
+    const eventScript = request.data.scripts?.find((script) => script.event === scriptType);
+    return eventScript?.script ?? '';
   };
-  
-  const updateScript = (value: string) => {
+
+  const updateScript = (value: string): void => {
     if (scriptType === 'pre') {
       onChange({ ...request, preRequestScript: value });
     } else if (scriptType === 'post') {
       onChange({ ...request, postRequestScript: value });
     } else {
-      const scripts = request.data.scripts || [];
-      const existingIndex = scripts.findIndex(s => s.event === scriptType);
+      const scripts: ProtocolScript[] = [...(request.data.scripts ?? [])];
+      const existingIndex = scripts.findIndex((script) => script.event === scriptType);
       
       if (existingIndex >= 0) {
         scripts[existingIndex] = { event: scriptType, script: value };
@@ -727,15 +778,14 @@ function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabPr
               {protocol.toUpperCase()} Events
             </div>
             <div className="flex flex-col gap-1">
-              {protocolEvents.map((evt: any) => (
+              {protocolEvents.map((evt) => (
                 <button
                   key={evt.name}
                   onClick={() => setScriptType(evt.name)}
                   className="w-full text-left px-3 py-2 text-sm rounded script-tab-button"
                   data-active={scriptType === evt.name}
-                  title={evt.description}
                 >
-                  {evt.name}{evt.required ? ' *' : ''}
+                  {evt.name}
                 </button>
               ))}
             </div>
@@ -758,13 +808,13 @@ function ScriptsTab({ request, onChange, uiContext, uiState, protocol }: UITabPr
 
 
 // Auth Tab Component
-function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection }: UITabProps & { supportedAuthTypes: string[]; collection: Collection | null }) {
+function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection }: UITabProps & { supportedAuthTypes: string[]; collection: Collection | null }): React.ReactElement {
   const { React, Radix } = uiContext;
   
   // Compute auth type: none (explicit), inherit (missing/type:'inherit'), or concrete type
   const authType = React.useMemo(() => {
     if (request.auth?.type === 'none') return 'none';
-    if (!request.auth || request.auth.type === 'inherit') return 'inherit';
+    if (request.auth === undefined || request.auth.type === 'inherit') return 'inherit';
     return request.auth.type;
   }, [request.auth]);
   
@@ -780,42 +830,47 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
   
   // Resolve inherited auth when type is 'inherit'
   const inheritedAuth = React.useMemo(() => {
-    if (authType !== 'inherit' || !collection) return null;
+    if (authType !== 'inherit' || collection === null) return null;
     return resolveInheritedAuth(collection, request.id);
   }, [authType, collection, request.id]);
   
   // Determine which auth to display
   const displayAuth = authType === 'inherit' ? inheritedAuth?.auth : request.auth;
-  const displayAuthType = displayAuth?.type || 'none';
+  const displayAuthType = displayAuth?.type ?? 'none';
   
   const authPluginUI = React.useMemo(() => {
-    if (displayAuthType === 'none' || displayAuthType === 'inherit') return null;
+    if (displayAuthType === 'none' || displayAuthType === 'inherit') return undefined;
     const plugin = pluginLoader.getAuthPluginUI(displayAuthType);
     return plugin;
   }, [displayAuthType]);
   
   const authData = React.useMemo(() => {
-    if (displayAuthType === 'none' || displayAuthType === 'inherit' || !authPluginUI) {
+    if (displayAuthType === 'none' || displayAuthType === 'inherit' || authPluginUI === undefined) {
       return {};
     }
-    if (displayAuth?.data) {
+    if (displayAuth?.data !== undefined) {
       return displayAuth.data;
     }
-    const defaultData = authPluginUI.createDefault ? authPluginUI.createDefault() : {};
-    return defaultData;
+    const defaultData = authPluginUI.createDefault();
+    return typeof defaultData === 'object' && defaultData !== null ? defaultData : {};
   }, [displayAuthType, displayAuth, authPluginUI]);
-  
-  const handleAuthDataChange = (newData: any) => {
+
+  const handleAuthDataChange = (newData: unknown): void => {
+    const normalizedAuthData: Record<string, unknown> =
+      typeof newData === 'object' && newData !== null
+        ? (newData as Record<string, unknown>)
+        : {};
+
     onChange({
       ...request,
       auth: {
         type: displayAuthType,
-        data: newData
+        data: normalizedAuthData
       }
     });
   };
   
-  const renderAuthForm = () => {
+  const renderAuthForm = (): React.ReactElement => {
     if (authType === 'none') {
       return (
         <div className="flex items-center justify-center flex-1" style={{ color: 'var(--gray-9)' }}>
@@ -828,7 +883,7 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
     }
     
     if (authType === 'inherit') {
-      if (!inheritedAuth || !inheritedAuth.auth) {
+      if (inheritedAuth?.auth === null || inheritedAuth === null) {
         return (
           <div className="flex items-center justify-center flex-1" style={{ color: 'var(--gray-9)' }}>
             <div className="text-center">
@@ -839,7 +894,7 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
         );
       }
       
-      if (!authPluginUI) {
+      if (authPluginUI === undefined) {
         return (
           <div className="flex items-center justify-center flex-1" style={{ color: '#ef4444' }}>
             <div className="text-sm">Auth plugin UI not found for type: {displayAuthType}</div>
@@ -859,7 +914,7 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
       );
     }
     
-    if (!authPluginUI) {
+    if (authPluginUI === undefined) {
       return (
         <div className="flex items-center justify-center flex-1" style={{ color: '#ef4444' }}>
           <div className="text-sm">Auth plugin UI not found for type: {authType}</div>
@@ -896,7 +951,7 @@ function AuthTab({ request, onChange, uiContext, supportedAuthTypes, collection 
             } else {
               // Concrete auth type
               const newAuthPluginUI = pluginLoader.getAuthPluginUI(value);
-              const createdAuthData = newAuthPluginUI?.createDefault ? newAuthPluginUI.createDefault() : {};
+              const createdAuthData = newAuthPluginUI?.createDefault() ?? {};
               const normalizedAuthData: Record<string, unknown> =
                 typeof createdAuthData === 'object' && createdAuthData !== null
                   ? (createdAuthData as Record<string, unknown>)

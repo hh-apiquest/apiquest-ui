@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
 import { Box, Flex, Text, Progress } from '@radix-ui/themes';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/24/outline';
 import type { Tab } from '../../contexts/TabContext';
@@ -8,11 +8,11 @@ interface RunnerProgressProps {
   tab: Tab;
 }
 
-export function RunnerProgress({ tab }: RunnerProgressProps) {
+export function RunnerProgress({ tab }: RunnerProgressProps): ReactElement {
   const metadata = tab.metadata as RunnerMetadata;
   
   // Parse execution events to get progress
-  const events = tab.execution?.events || [];
+  const events = tab.execution?.events ?? [];
   const totalRequests = metadata.selectedRequests.length;
   
   // Track completed requests - use Set to deduplicate by requestId
@@ -20,8 +20,8 @@ export function RunnerProgress({ tab }: RunnerProgressProps) {
   const passedRequestIds = new Set<string>();
   const failedRequestIds = new Set<string>();
   
-  events.forEach(event => {
-    if (event.type === 'requestCompleted' && event.data?.requestId) {
+  events.forEach((event) => {
+    if (event.type === 'requestCompleted' && event.data?.requestId !== undefined && event.data.requestId !== '') {
       completedRequestIds.add(event.data.requestId);
       if (event.data.success === true) {
         passedRequestIds.add(event.data.requestId);
@@ -36,23 +36,23 @@ export function RunnerProgress({ tab }: RunnerProgressProps) {
   const failedRequests = failedRequestIds.size;
   
   // Calculate duration
-  const startTime = events.find(e => e.type === 'beforeRun')?.timestamp;
+  const startTime = events.find((e) => e.type === 'beforeRun')?.timestamp;
   const endTime = events.length > 0 ? events[events.length - 1].timestamp : undefined;
-  const duration = startTime && endTime ? Math.round((endTime - startTime) / 1000) : 0;
+  const duration = startTime !== undefined && endTime !== undefined ? Math.round((endTime - startTime) / 1000) : 0;
   
   // Calculate progress percentage, capped at 100
   const progress = totalRequests > 0 ? Math.min((completedRequests / totalRequests) * 100, 100) : 0;
   
   // Map request IDs to their status
   const requestStatuses = new Map<string, 'pending' | 'running' | 'completed' | 'failed'>();
-  metadata.selectedRequests.forEach(id => requestStatuses.set(id, 'pending'));
+  metadata.selectedRequests.forEach((id) => requestStatuses.set(id, 'pending'));
   
-  events.forEach(event => {
-    if (event.type === 'requestStarted' && event.data?.requestId) {
+  events.forEach((event) => {
+    if (event.type === 'requestStarted' && event.data?.requestId !== undefined && event.data.requestId !== '') {
       if (requestStatuses.get(event.data.requestId) === 'pending') {
         requestStatuses.set(event.data.requestId, 'running');
       }
-    } else if (event.type === 'requestCompleted' && event.data?.requestId) {
+    } else if (event.type === 'requestCompleted' && event.data?.requestId !== undefined && event.data.requestId !== '') {
       const success = event.data.success === true;
       requestStatuses.set(event.data.requestId, success ? 'completed' : 'failed');
     }
@@ -77,7 +77,7 @@ export function RunnerProgress({ tab }: RunnerProgressProps) {
           <Text size="2" weight="medium" mb="2">Requests</Text>
           <Flex direction="column" gap="2">
             {metadata.selectedRequests.map((requestId, index) => {
-              const status = requestStatuses.get(requestId) || 'pending';
+              const status = requestStatuses.get(requestId) ?? 'pending';
               const icon = status === 'completed' ? (
                 <CheckCircleIcon className="w-4 h-4 text-green-500" />
               ) : status === 'failed' ? (

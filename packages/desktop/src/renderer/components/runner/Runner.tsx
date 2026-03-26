@@ -1,35 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Box, Flex, Text, Badge, Tabs, Card, Button, Code, Table, Progress } from '@radix-ui/themes';
-import { CheckCircleIcon, XCircleIcon, NoSymbolIcon } from '@heroicons/react/24/solid';
-import { ClipboardDocumentIcon } from '@heroicons/react/24/outline';
-import type { Tab } from '../../contexts/TabContext';
-import type { RunnerMetadata } from '../../contexts/TabContext';
+import React, { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { Badge, Box, Button, Card, Code, Flex, Progress, Tabs, Text } from '@radix-ui/themes';
+import type { CollectionItem, ProtocolResponse, Request } from '@apiquest/types';
+import type { Tab, RunnerMetadata } from '../../contexts/TabContext';
 import type { ExecutionEvent } from '../../../types/execution';
 import { pluginLoader } from '../../services';
 import { useWorkspace } from '../../contexts';
-import type { Collection, CollectionItem } from '@apiquest/types';
 import { buildSummary } from '../../utils/responseAdapters';
 
 interface RunnerProps {
   tab: Tab;
-}
-
-// Protocol-agnostic request result
-interface RequestResult {
-  requestId: string;
-  requestName: string;
-  requestPath?: string;
-  status: 'success' | 'failed' | 'skipped' | 'running' | 'pending';
-  duration: number;
-  tests: TestResult[];
-  // Request/Response data (protocol-specific, for detail panel)
-  requestData?: any;
-  responseData?: any;
-  metadata?: {
-    protocol?: string;
-    timestamp?: number;
-    error?: string;
-  };
 }
 
 interface TestResult {
@@ -38,11 +17,119 @@ interface TestResult {
   error?: string;
 }
 
+interface RequestResultResponseData {
+  summary: string;
+  detail?: string;
+  outcome?: 'success' | 'error';
+  code?: number | string;
+  rawData?: unknown;
+}
+
+interface RequestResultMetadata {
+  protocol?: string;
+  timestamp?: number;
+  error?: string;
+}
+
+interface RequestResult {
+  requestId: string;
+  requestName: string;
+  requestPath?: string;
+  status: 'success' | 'failed' | 'skipped' | 'running' | 'pending';
+  duration: number;
+  tests: TestResult[];
+  requestData?: Request['data'];
+  responseData?: RequestResultResponseData;
+  metadata?: RequestResultMetadata;
+}
+
 type RequestStatusFilter = 'all' | 'success' | 'errors';
 type TestResultFilter = 'all' | 'passed' | 'failed' | 'skipped';
 
-export function Runner({ tab }: RunnerProps) {
-  const metadata = tab.metadata as RunnerMetadata;
+function isRunnerMetadata(metadata: Tab['metadata']): metadata is RunnerMetadata {
+  return metadata !== undefined && metadata !== null && 'runId' in metadata;
+}
+
+function hasNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value !== '';
+}
+
+function toRequestStatusFilter(value: string): RequestStatusFilter {
+  if (value === 'success' || value === 'errors' || value === 'all') {
+    return value;
+  }
+
+  return 'all';
+}
+
+function toTestResultFilter(value: string): TestResultFilter {
+  if (value === 'passed' || value === 'failed' || value === 'skipped' || value === 'all') {
+    return value;
+  }
+
+  return 'all';
+}
+
+function findRequests(items: CollectionItem[], targetIds: string[], namesMap: Map<string, string>): void {
+  for (const item of items) {
+    if (item.type === 'request' && targetIds.includes(item.id)) {
+      namesMap.set(item.id, item.name);
+      continue;
+    }
+
+    if (item.type === 'folder') {
+      findRequests(item.items, targetIds, namesMap);
+    }
+  }
+}
+
+function buildRequestModel(result: RequestResult): Request | undefined {
+  if (result.requestData === undefined) {
+    return undefined;
+  }
+
+  return {
+    type: 'request',
+    id: result.requestId,
+    name: result.requestName,
+    data: result.requestData
+  };
+}
+
+function buildResponseModel(result: RequestResult): ProtocolResponse | undefined {
+  if (result.responseData === undefined) {
+    return undefined;
+  }
+
+  const outcome = result.responseData.outcome ?? (result.metadata?.error !== undefined ? 'error' : 'success');
+
+  return {
+    data: result.responseData.rawData,
+    summary: {
+      duration: result.duration,
+      outcome,
+      code: result.responseData.code,
+      label: result.responseData.summary,
+      message: result.responseData.detail
+    }
+  };
+}
+
+function getRequestPathSegments(requestPath: string | undefined): string[] {
+  if (!hasNonEmptyString(requestPath)) {
+    return [];
+  }
+
+  const normalizedPath = requestPath.startsWith('request:/')
+    ? requestPath.replace('request:/', '')
+    : requestPath.startsWith('/')
+      ? requestPath.slice(1)
+      : requestPath;
+
+  return normalizedPath === '' ? [] : normalizedPath.split('/');
+}
+
+export function Runner({ tab }: RunnerProps): ReactElement {
   const { workspace } = useWorkspace();
   const [requestStatusFilter, setRequestStatusFilter] = useState<RequestStatusFilter>('all');
   const [testResultFilter, setTestResultFilter] = useState<TestResultFilter>('all');
@@ -50,39 +137,31 @@ export function Runner({ tab }: RunnerProps) {
   const [requestNamesMap, setRequestNamesMap] = useState<Map<string, string>>(new Map());
   const [selectedIteration, setSelectedIteration] = useState<number | null>(null);
   const [hasManualIterationSelection, setHasManualIterationSelection] = useState(false);
+  const metadata = isRunnerMetadata(tab.metadata) ? tab.metadata : null;
+  const metadataCollectionId = metadata?.collectionId ?? '';
+  const metadataSelectedRequests = useMemo(() => metadata?.selectedRequests ?? [], [metadata]);
+  const metadataIterations = metadata?.config.iterations ?? 1;
+  const isRunning = metadata?.status === 'running' || metadata?.status === 'pending';
+  const events = useMemo<ExecutionEvent[]>(() => tab.execution?.events ?? [], [tab.execution?.events]);
 
-  const isRunning = metadata.status === 'running' || metadata.status === 'pending';
-  const events = tab.execution?.events || [];
-  
-  // Load collection and extract request names for selected request IDs
   useEffect(() => {
-    const loadRequestNames = async () => {
-      if (!workspace || !metadata.collectionId || !metadata.selectedRequests.length) return;
-      
+    const loadRequestNames = async (): Promise<void> => {
+      if (workspace === null || metadata === null || metadataCollectionId === '' || metadataSelectedRequests.length === 0) {
+        return;
+      }
+
       try {
-        const collection = await window.quest.workspace.loadCollection(workspace.id, metadata.collectionId) as Collection;
-        
-        // Recursively find requests in collection items
-        const findRequests = (items: CollectionItem[], targetIds: string[], namesMap: Map<string, string>) => {
-          for (const item of items) {
-            if (item.type === 'request' && targetIds.includes(item.id)) {
-              namesMap.set(item.id, item.name);
-            } else if (item.type === 'folder') {
-              findRequests(item.items, targetIds, namesMap);
-            }
-          }
-        };
-        
+        const collection = await window.quest.workspace.loadCollection(workspace.id, metadataCollectionId);
         const namesMap = new Map<string, string>();
-        findRequests(collection.items, metadata.selectedRequests, namesMap);
+        findRequests(collection.items, metadataSelectedRequests, namesMap);
         setRequestNamesMap(namesMap);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to load request names:', error);
       }
     };
-    
-    loadRequestNames();
-  }, [workspace, metadata.collectionId, metadata.selectedRequests]);
+
+    void loadRequestNames();
+  }, [workspace, metadata, metadataCollectionId, metadataSelectedRequests]);
 
   const iterationState = useMemo(() => {
     let maxIteration = 0;
@@ -91,9 +170,8 @@ export function Runner({ tab }: RunnerProps) {
     const iterationsSeen = new Set<number>();
 
     events.forEach((event: ExecutionEvent) => {
-      const iteration = event.data?.iteration;
-      const current = iteration?.current;
-      const total = iteration?.total;
+      const current = event.data?.iteration?.current;
+      const total = event.data?.iteration?.total;
 
       if (typeof current === 'number') {
         iterationsSeen.add(current);
@@ -108,17 +186,21 @@ export function Runner({ tab }: RunnerProps) {
       }
     });
 
-    const inferredCount = totalIteration || maxIteration;
-    const fallbackCount = metadata.config?.iterations ?? 1;
-    const iterationCount = inferredCount || fallbackCount;
+    const inferredCount = totalIteration > 0 ? totalIteration : maxIteration;
+    const iterationCount = inferredCount > 0 ? inferredCount : metadataIterations;
     const orderedIterations = Array.from(iterationsSeen).sort((a, b) => a - b);
+    const resolvedCurrentIteration = currentIteration > 0
+      ? currentIteration
+      : orderedIterations.length > 0
+        ? orderedIterations[orderedIterations.length - 1]
+        : 1;
 
     return {
       iterationCount,
       iterationsSeen: orderedIterations,
-      currentIteration: currentIteration || orderedIterations[orderedIterations.length - 1] || 1
+      currentIteration: resolvedCurrentIteration
     };
-  }, [events, metadata.config?.iterations]);
+  }, [events, metadataIterations]);
 
   const showIterationBar = iterationState.iterationCount > 1;
   const effectiveIteration = showIterationBar ? (selectedIteration ?? iterationState.currentIteration) : null;
@@ -137,7 +219,7 @@ export function Runner({ tab }: RunnerProps) {
     if (!hasManualIterationSelection) {
       setSelectedIteration(iterationState.currentIteration);
     }
-  }, [showIterationBar, iterationState.currentIteration, hasManualIterationSelection, selectedIteration]);
+  }, [showIterationBar, selectedIteration, hasManualIterationSelection, iterationState.currentIteration]);
 
   useEffect(() => {
     if (events.length === 0) {
@@ -155,19 +237,16 @@ export function Runner({ tab }: RunnerProps) {
       return events;
     }
 
-    return events.filter(event => event.data?.iteration?.current === effectiveIteration);
+    return events.filter((event) => event.data?.iteration?.current === effectiveIteration);
   }, [events, showIterationBar, effectiveIteration]);
 
-  // Parse execution events to build RequestResult[]
   const requestResults = useMemo(() => {
-    const scopedEvents = eventsForIteration;
     const resultsMap = new Map<string, RequestResult>();
 
-    // Initialize all selected requests with actual names from collection
-    metadata.selectedRequests.forEach(requestId => {
+    metadataSelectedRequests.forEach((requestId) => {
       resultsMap.set(requestId, {
         requestId,
-        requestName: requestNamesMap.get(requestId) || requestId,  // Use actual name or fallback to ID
+        requestName: requestNamesMap.get(requestId) ?? requestId,
         status: 'pending',
         duration: 0,
         tests: [],
@@ -175,63 +254,52 @@ export function Runner({ tab }: RunnerProps) {
       });
     });
 
-    // Track test assertions per request (collected from assertion events)
     const testsByRequest = new Map<string, TestResult[]>();
-    
-    // Track seen event IDs to handle duplicates (React StrictMode causes double renders)
     const seenEventIds = new Set<string>();
 
-    scopedEvents.forEach((event: ExecutionEvent) => {
-      // Skip duplicate events based on unique ID (Fracture adds event.data.id)
+    eventsForIteration.forEach((event: ExecutionEvent) => {
       const eventId = event.data?.id;
-      if (eventId) {
+      if (hasNonEmptyString(eventId)) {
         if (seenEventIds.has(eventId)) {
-          return; // Skip duplicate
+          return;
         }
         seenEventIds.add(eventId);
       }
-      
-      // beforeItem: Mark request as running, get actual request name
-      if (event.type === 'beforeItem' && event.data?.request) {
+
+      if (event.type === 'beforeItem' && event.data?.request !== undefined) {
         const requestId = event.data.request.id;
         const existing = resultsMap.get(requestId);
-        if (existing && existing.status === 'pending') {
+        if (existing?.status === 'pending') {
           existing.status = 'running';
-          existing.requestName = event.data.request.name || existing.requestName;
+          existing.requestName = event.data.request.name !== '' ? event.data.request.name : existing.requestName;
         }
-        if (existing && event.data?.path) {
+        if (existing !== undefined && hasNonEmptyString(event.data.path)) {
           existing.requestPath = event.data.path;
         }
-        // Clear previous tests for this request (fresh start)
         testsByRequest.set(requestId, []);
       }
 
-      // afterRequest: Extract response data and protocol info
-      if (event.type === 'afterRequest' && event.data?.request) {
+      if (event.type === 'afterRequest' && event.data?.request !== undefined) {
         const requestId = event.data.request.id;
         const existing = resultsMap.get(requestId);
-        if (existing) {
+        if (existing !== undefined) {
           const request = event.data.request;
           const response = event.data.response;
-          if (event.data?.path) {
+          if (hasNonEmptyString(event.data.path)) {
             existing.requestPath = event.data.path;
           }
           const protocol = event.data.protocol;
-          const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-          const badge = plugin ? plugin.getRequestBadge(request) : null;
+          const plugin = hasNonEmptyString(protocol) ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
           const summaryView = buildSummary(request, response, plugin);
-          
-          // Store the full request data for plugin rendering
-          existing.requestData = request.data;
 
-          existing.responseData = response ? {
-            summary: summaryView?.statusLabel || 'Complete',
+          existing.requestData = request.data;
+          existing.responseData = response !== undefined ? {
+            summary: summaryView?.statusLabel ?? 'Complete',
             detail: summaryView?.statusDetail,
             outcome: summaryView?.outcome,
             code: summaryView?.code,
             rawData: summaryView?.rawData
           } : undefined;
-
           existing.duration = summaryView?.duration ?? event.data.duration ?? 0;
           existing.metadata = {
             protocol,
@@ -241,13 +309,12 @@ export function Runner({ tab }: RunnerProps) {
         }
       }
 
-      // assertion: Collect test results (emitted during/after post-request scripts)
-      if (event.type === 'assertion' && event.data?.test) {
+      if (event.type === 'assertion' && event.data?.test !== undefined) {
         const requestId = event.data.request?.id;
-        if (requestId) {
-          const tests = testsByRequest.get(requestId) || [];
+        if (hasNonEmptyString(requestId)) {
+          const tests = testsByRequest.get(requestId) ?? [];
           tests.push({
-            name: event.data.test.name || 'Unnamed Test',
+            name: event.data.test.name ?? 'Unnamed Test',
             passed: event.data.test.passed === true,
             error: event.data.test.error
           });
@@ -255,90 +322,75 @@ export function Runner({ tab }: RunnerProps) {
         }
       }
 
-      // afterItem: Mark request as completed, attach tests, determine final status
-      if (event.type === 'afterItem' && event.data?.request) {
+      if (event.type === 'afterItem' && event.data?.request !== undefined) {
         const requestId = event.data.request.id;
         const existing = resultsMap.get(requestId);
-        
-        if (existing) {
+
+        if (existing !== undefined) {
           const result = event.data.result;
-          existing.requestName = event.data.request.name || existing.requestName;
-          if (event.data?.path) {
+          existing.requestName = event.data.request.name !== '' ? event.data.request.name : existing.requestName;
+          if (hasNonEmptyString(event.data.path)) {
             existing.requestPath = event.data.path;
           }
-          
-          // Determine status from result or response
-          if (result?.skipped) {
+
+          if (result?.skipped === true) {
             existing.status = 'skipped';
-          } else if (result?.error || existing.metadata?.error) {
+          } else if (result?.error !== undefined || existing.metadata?.error !== undefined) {
             existing.status = 'failed';
           } else {
-            // Check if any tests failed
-            const tests = testsByRequest.get(requestId) || [];
-            const hasFailedTests = tests.some(t => !t.passed);
+            const tests = testsByRequest.get(requestId) ?? [];
+            const hasFailedTests = tests.some((test) => test.passed === false);
             existing.status = hasFailedTests ? 'failed' : 'success';
           }
-          
-          // Attach all collected tests
-          existing.tests = testsByRequest.get(requestId) || [];
+
+          existing.tests = testsByRequest.get(requestId) ?? [];
         }
       }
     });
 
     return Array.from(resultsMap.values());
-  }, [eventsForIteration, metadata.selectedRequests, requestNamesMap]);
+  }, [eventsForIteration, metadataSelectedRequests, requestNamesMap]);
 
-  // Calculate progress
   const completedCount = useMemo(() => {
-    return requestResults.filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'skipped').length;
+    return requestResults.filter((result) => result.status === 'success' || result.status === 'failed' || result.status === 'skipped').length;
   }, [requestResults]);
 
-  const totalRequests = metadata.selectedRequests.length;
+  const totalRequests = metadataSelectedRequests.length;
   const progressValue = totalRequests > 0 ? Math.min((completedCount / totalRequests) * 100, 100) : 0;
-
-  // Calculate duration
-  const startTime = events.find(e => e.type === 'beforeRun')?.timestamp;
+  const startTime = events.find((event) => event.type === 'beforeRun')?.timestamp;
   const endTime = events.length > 0 ? events[events.length - 1].timestamp : undefined;
-  const totalDuration = startTime && endTime ? Math.round((endTime - startTime) / 1000) : 0;
+  const totalDuration = startTime !== undefined && endTime !== undefined ? Math.round((endTime - startTime) / 1000) : 0;
 
-  // Filter results based on request status and test results
-  // When test result filter is active, only show those specific tests for each request
   const filteredResults = useMemo(() => {
     let filtered = requestResults;
 
-    // Filter by request status
     if (requestStatusFilter === 'success') {
-      filtered = filtered.filter(r => r.status === 'success');
+      filtered = filtered.filter((result) => result.status === 'success');
     } else if (requestStatusFilter === 'errors') {
-      filtered = filtered.filter(r => r.status === 'failed' || r.status === 'skipped');
+      filtered = filtered.filter((result) => result.status === 'failed' || result.status === 'skipped');
     }
 
-    // Filter by test results - show only requests with matching tests, and filter tests within each request
     if (testResultFilter !== 'all') {
       filtered = filtered
-        .map(r => {
-          let filteredTests = r.tests;
-          
+        .map((result) => {
+          let filteredTests = result.tests;
+
           if (testResultFilter === 'passed') {
-            filteredTests = r.tests.filter(t => t.passed);
+            filteredTests = result.tests.filter((test) => test.passed);
           } else if (testResultFilter === 'failed') {
-            filteredTests = r.tests.filter(t => !t.passed);
+            filteredTests = result.tests.filter((test) => !test.passed);
           } else if (testResultFilter === 'skipped') {
-            // For skipped, show requests with no tests
-            filteredTests = r.tests.length === 0 ? [] : r.tests;
+            filteredTests = result.tests.length === 0 ? [] : result.tests;
           }
-          
-          // Return request with filtered tests
-          return { ...r, tests: filteredTests };
+
+          return { ...result, tests: filteredTests };
         })
-        .filter(r => {
-          // Only include requests that have matching criteria
-          if (testResultFilter === 'passed') {
-            return r.tests.length > 0; // Has passed tests
-          } else if (testResultFilter === 'failed') {
-            return r.tests.length > 0; // Has failed tests
-          } else if (testResultFilter === 'skipped') {
-            return r.tests.length === 0; // Has no tests
+        .filter((result) => {
+          if (testResultFilter === 'passed' || testResultFilter === 'failed') {
+            return result.tests.length > 0;
+          }
+          if (testResultFilter === 'skipped') {
+            return result.tests.length === 0;
           }
           return true;
         });
@@ -347,38 +399,40 @@ export function Runner({ tab }: RunnerProps) {
     return filtered;
   }, [requestResults, requestStatusFilter, testResultFilter]);
 
-  // Calculate counts for filter tabs
   const counts = useMemo(() => {
     return {
-      // Request status counts
       all: requestResults.length,
-      success: requestResults.filter(r => r.status === 'success').length,
-      errors: requestResults.filter(r => r.status === 'failed' || r.status === 'skipped').length,
-      
-      // Test result counts
+      success: requestResults.filter((result) => result.status === 'success').length,
+      errors: requestResults.filter((result) => result.status === 'failed' || result.status === 'skipped').length,
       testsAll: requestResults.length,
-      testsPassed: requestResults.filter(r => r.tests.length > 0 && r.tests.every(t => t.passed)).length,
-      testsFailed: requestResults.filter(r => r.tests.some(t => !t.passed)).length,
-      testsSkipped: requestResults.filter(r => r.tests.length === 0).length
+      testsPassed: requestResults.filter((result) => result.tests.length > 0 && result.tests.every((test) => test.passed)).length,
+      testsFailed: requestResults.filter((result) => result.tests.some((test) => !test.passed)).length,
+      testsSkipped: requestResults.filter((result) => result.tests.length === 0).length
     };
   }, [requestResults]);
 
-  // Get selected request details
   const selectedRequest = useMemo(() => {
-    return requestResults.find(r => r.requestId === selectedRequestId);
+    return requestResults.find((result) => result.requestId === selectedRequestId) ?? null;
   }, [requestResults, selectedRequestId]);
 
-  const handleRequestClick = (requestId: string) => {
-    setSelectedRequestId(prev => prev === requestId ? null : requestId);
+  const handleRequestClick = (requestId: string): void => {
+    setSelectedRequestId((previous) => previous === requestId ? null : requestId);
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = (text: string): void => {
+    void navigator.clipboard.writeText(text);
   };
+
+  if (metadata === null) {
+    return (
+      <Box p="3">
+        <Text size="2" color="gray">Runner metadata is unavailable.</Text>
+      </Box>
+    );
+  }
 
   return (
     <Flex direction="column" style={{ height: '100%', overflow: 'hidden' }}>
-      {/* Progress Bar (shown while running) */}
       {isRunning && (
         <Box p="3" style={{ borderBottom: '1px solid var(--gray-6)' }}>
           <Flex align="center" justify="between" mb="2">
@@ -394,7 +448,6 @@ export function Runner({ tab }: RunnerProps) {
       <Flex style={{ flex: 1, overflow: 'hidden' }}>
         <Box style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
           <Flex direction="column" style={{ height: '100%', overflow: 'hidden' }}>
-            {/* Summary Stats */}
             <Box p="3" style={{ borderBottom: '1px solid var(--gray-6)' }}>
               <Flex gap="3">
                 <Box style={{ flex: 1, textAlign: 'center' }}>
@@ -412,10 +465,8 @@ export function Runner({ tab }: RunnerProps) {
               </Flex>
             </Box>
 
-            {/* Filter Tabs - Request Status & Test Results */}
             <Box p="3" style={{ borderBottom: '1px solid var(--gray-6)' }}>
               <Flex direction="column" gap="2">
-                {/* Labels */}
                 <Flex gap="3">
                   <Box style={{ flex: 1 }}>
                     <Text size="1" weight="medium" color="gray">Request Status</Text>
@@ -426,11 +477,9 @@ export function Runner({ tab }: RunnerProps) {
                   </Box>
                 </Flex>
 
-                {/* Filter Tabs */}
                 <Flex gap="3" align="center">
-                  {/* Request Status Filter */}
                   <Box style={{ flex: 1 }}>
-                    <Tabs.Root value={requestStatusFilter} onValueChange={(value) => setRequestStatusFilter(value as RequestStatusFilter)}>
+                    <Tabs.Root value={requestStatusFilter} onValueChange={(value) => setRequestStatusFilter(toRequestStatusFilter(value))}>
                       <Tabs.List>
                         <Tabs.Trigger value="all">
                           All <Badge size="1" ml="1">{counts.all}</Badge>
@@ -445,18 +494,19 @@ export function Runner({ tab }: RunnerProps) {
                     </Tabs.Root>
                   </Box>
 
-                  {/* Separator */}
                   <Box style={{ width: '1px', height: '32px', backgroundColor: 'var(--gray-6)' }} />
 
-                  {/* Test Results Filter */}
                   <Box style={{ flex: 1 }}>
-                    <Tabs.Root value={testResultFilter} onValueChange={(value) => {
-                      setTestResultFilter(value as TestResultFilter);
-                      // Reset request status filter to 'all' when changing test result filter
-                      if (value !== 'all') {
-                        setRequestStatusFilter('all');
-                      }
-                    }}>
+                    <Tabs.Root
+                      value={testResultFilter}
+                      onValueChange={(value) => {
+                        const nextFilter = toTestResultFilter(value);
+                        setTestResultFilter(nextFilter);
+                        if (nextFilter !== 'all') {
+                          setRequestStatusFilter('all');
+                        }
+                      }}
+                    >
                       <Tabs.List>
                         <Tabs.Trigger value="all">
                           All <Badge size="1" ml="1">{counts.testsAll}</Badge>
@@ -477,13 +527,11 @@ export function Runner({ tab }: RunnerProps) {
               </Flex>
             </Box>
 
-            {/* Two-Panel Layout */}
             <Flex style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
-              {/* Left Panel: Request Cards (40%) */}
               <Box
                 style={{
-                  width: selectedRequest ? '40%' : '100%',
-                  borderRight: selectedRequest ? '1px solid var(--gray-6)' : 'none',
+                  width: selectedRequest !== null ? '40%' : '100%',
+                  borderRight: selectedRequest !== null ? '1px solid var(--gray-6)' : 'none',
                   minHeight: 0,
                   flex: 1,
                   overflow: 'auto'
@@ -498,7 +546,7 @@ export function Runner({ tab }: RunnerProps) {
                         </Flex>
                       </Card>
                     ) : (
-                      filteredResults.map(result => (
+                      filteredResults.map((result) => (
                         <RequestCard
                           key={result.requestId}
                           result={result}
@@ -511,14 +559,9 @@ export function Runner({ tab }: RunnerProps) {
                 </Box>
               </Box>
 
-              {/* Right Panel: Detail Panel (60%, toggleable) */}
-              {selectedRequest && (
+              {selectedRequest !== null && (
                 <Box style={{ width: '60%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <DetailPanel
-                    result={selectedRequest}
-                    onClose={() => setSelectedRequestId(null)}
-                    onCopy={handleCopy}
-                  />
+                  <DetailPanel result={selectedRequest} onClose={() => setSelectedRequestId(null)} onCopy={handleCopy} />
                 </Box>
               )}
             </Flex>
@@ -535,7 +578,7 @@ export function Runner({ tab }: RunnerProps) {
             }}
           >
             <Flex direction="column" gap="1" p="1">
-              {iterationState.iterationsSeen.map(iteration => {
+              {iterationState.iterationsSeen.map((iteration) => {
                 const isActive = iteration === effectiveIteration;
                 return (
                   <Button
@@ -547,10 +590,7 @@ export function Runner({ tab }: RunnerProps) {
                       setSelectedIteration(iteration);
                       setHasManualIterationSelection(true);
                     }}
-                    style={{
-                      width: '100%',
-                      justifyContent: 'center'
-                    }}
+                    style={{ width: '100%', justifyContent: 'center' }}
                   >
                     {iteration}
                   </Button>
@@ -564,45 +604,19 @@ export function Runner({ tab }: RunnerProps) {
   );
 }
 
-// Request Card Component (with always-expanded tests)
 interface RequestCardProps {
   result: RequestResult;
   isSelected: boolean;
   onClick: () => void;
 }
 
-function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
+function RequestCard({ result, isSelected, onClick }: RequestCardProps): ReactElement {
   const protocol = result.metadata?.protocol;
-  const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-  const requestPath = result.requestPath?.startsWith('request:/')
-    ? result.requestPath.replace('request:/', '')
-    : result.requestPath?.startsWith('/')
-      ? result.requestPath.slice(1)
-      : result.requestPath;
-  // Build breadcrumb segments from request path.
-  const requestPathSegments = requestPath ? requestPath.split('/') : [];
-  
-  // Build Request and ProtocolResponse for summaryLine
-  const request = result.requestData ? {
-    type: 'request' as const,
-    id: result.requestId,
-    name: result.requestName,
-    data: result.requestData
-  } : undefined;
-
-  const response = result.responseData ? {
-    data: result.responseData.rawData,
-    summary: {
-      duration: result.duration,
-      outcome: result.responseData.outcome,
-      code: result.responseData.code,
-      label: result.responseData.summary,
-      message: result.responseData.detail
-    }
-  } : undefined;
-
-  // Get summary including summaryLine component
-  const summary = request && plugin ? plugin.getSummary(request, response) : null;
+  const plugin = hasNonEmptyString(protocol) ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
+  const requestPathSegments = getRequestPathSegments(result.requestPath);
+  const request = buildRequestModel(result);
+  const response = buildResponseModel(result);
+  const summary = request !== undefined && plugin !== undefined ? plugin.getSummary(request, response) : null;
   const SummaryLine = summary?.summaryLine;
 
   return (
@@ -617,30 +631,22 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
       <Flex direction="column" gap="2">
         {requestPathSegments.length > 0 && (
           <Flex align="center" gap="1" style={{ flexWrap: 'wrap' }}>
-            {requestPathSegments.map((segment, index) => {
-              const isLast = index === requestPathSegments.length - 1;
-              return (
-                <React.Fragment key={`${segment}-${index}`}>
-                  {index > 0 && (
-                    <Text size="1" color="blue" style={{ fontFamily: 'var(--font-mono)' }}>
-                      /
-                    </Text>
-                  )}
-                  <Text
-                    size="1"
-                    color={isLast ? 'blue' : 'blue'}
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  >
-                    {segment}
+            {requestPathSegments.map((segment, index) => (
+              <React.Fragment key={`${segment}-${index}`}>
+                {index > 0 && (
+                  <Text size="1" color="blue" style={{ fontFamily: 'var(--font-mono)' }}>
+                    /
                   </Text>
-                </React.Fragment>
-              );
-            })}
+                )}
+                <Text size="1" color="blue" style={{ fontFamily: 'var(--font-mono)' }}>
+                  {segment}
+                </Text>
+              </React.Fragment>
+            ))}
           </Flex>
         )}
 
-        {/* Request Header: Use plugin summaryLine or fallback */}
-        {SummaryLine && request && response ? (
+        {SummaryLine !== undefined && request !== undefined && response !== undefined ? (
           <SummaryLine
             request={request}
             response={response}
@@ -661,13 +667,12 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
           </Flex>
         )}
 
-        {/* Tests (Always Expanded) */}
         <Box pl="3" style={{ backgroundColor: 'transparent' }}>
           <Flex direction="column" gap="1">
             {result.tests.length > 0 ? (
-              result.tests.map((test, idx) => (
+              result.tests.map((test, index) => (
                 <Flex
-                  key={idx}
+                  key={`${test.name}-${index}`}
                   align="start"
                   gap="2"
                   style={{
@@ -676,11 +681,11 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
                     backgroundColor: 'transparent',
                     transition: 'background-color 0.2s'
                   }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--gray-2)';
+                  onMouseEnter={(event): void => {
+                    event.currentTarget.style.backgroundColor = 'var(--gray-2)';
                   }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'transparent';
+                  onMouseLeave={(event): void => {
+                    event.currentTarget.style.backgroundColor = 'transparent';
                   }}
                 >
                   <Text
@@ -690,7 +695,7 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
                       color: test.passed ? 'var(--green-9)' : 'var(--red-9)',
                       minWidth: '20px',
                       flexShrink: 0,
-                      paddingTop: '5px',
+                      paddingTop: '5px'
                     }}
                   >
                     {test.passed ? 'PASS' : 'FAIL'}
@@ -699,8 +704,8 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
                     <Text size="1" style={{ color: test.passed ? 'var(--green-11)' : 'var(--red-11)' }}>
                       {test.name}
                     </Text>
-                    {test.error && (
-                      <Text size="1" style={{ color: 'var(--red-10)', fontFamily: 'var(--font-mono)', marginTop: '2px', marginLeft:'10px' }}>
+                    {hasNonEmptyString(test.error) && (
+                      <Text size="1" style={{ color: 'var(--red-10)', fontFamily: 'var(--font-mono)', marginTop: '2px', marginLeft: '10px' }}>
                         {test.error}
                       </Text>
                     )}
@@ -719,23 +724,20 @@ function RequestCard({ result, isSelected, onClick }: RequestCardProps) {
   );
 }
 
-// Detail Panel Component (Request/Response/Metadata tabs)
 interface DetailPanelProps {
   result: RequestResult;
   onClose: () => void;
   onCopy: (text: string) => void;
 }
 
-function DetailPanel({ result, onClose, onCopy }: DetailPanelProps) {
+function DetailPanel({ result, onClose }: DetailPanelProps): ReactElement {
   return (
     <Flex direction="column" style={{ height: '100%', overflow: 'hidden' }}>
-      {/* Header */}
       <Flex align="center" justify="between" p="3" style={{ borderBottom: '1px solid var(--gray-6)' }}>
         <Text size="2" weight="medium">Request Details</Text>
         <Button size="1" variant="ghost" onClick={onClose}>×</Button>
       </Flex>
 
-      {/* Tabs */}
       <Tabs.Root defaultValue="details" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <Box p="3" style={{ borderBottom: '1px solid var(--gray-6)' }}>
           <Tabs.List>
@@ -760,35 +762,17 @@ function DetailPanel({ result, onClose, onCopy }: DetailPanelProps) {
   );
 }
 
-// Details Tab - Use plugin detailView
 interface DetailsTabProps {
   result: RequestResult;
 }
 
-function DetailsTab({ result }: DetailsTabProps) {
+function DetailsTab({ result }: DetailsTabProps): ReactElement {
   const protocol = result.metadata?.protocol;
-  const plugin = protocol ? pluginLoader.getProtocolPluginUI(protocol) : null;
-  
-  // Convert RequestResult to Request and ProtocolResponse
-  const request = result.requestData ? {
-    type: 'request' as const,
-    id: result.requestId,
-    name: result.requestName,
-    data: result.requestData
-  } : undefined;
+  const plugin = hasNonEmptyString(protocol) ? pluginLoader.getProtocolPluginUI(protocol) : undefined;
+  const request = buildRequestModel(result);
+  const response = buildResponseModel(result);
 
-  const response = result.responseData ? {
-    data: result.responseData.rawData,
-    summary: {
-      duration: result.duration,
-      outcome: result.responseData.outcome,
-      code: result.responseData.code,
-      label: result.responseData.summary,
-      message: result.responseData.detail
-    }
-  } : undefined;
-
-  if (!response) {
+  if (response === undefined) {
     return (
       <Box p="4">
         <Text size="2" color="gray">No response data available</Text>
@@ -796,36 +780,30 @@ function DetailsTab({ result }: DetailsTabProps) {
     );
   }
 
-  // Get response summary which includes detailView component
-  const summary = request && plugin ? plugin.getSummary(request, response) : null;
+  const summary = request !== undefined && plugin !== undefined ? plugin.getSummary(request, response) : null;
   const DetailView = summary?.detailView;
 
-  // If plugin provides detailView, use it
-  if (DetailView) {
+  if (DetailView !== undefined) {
     const uiContext = pluginLoader.getUIContext();
-    const uiState = {
-      theme: uiContext.theme
-    };
-    
+
     return (
       <DetailView
         request={request}
         response={response}
         events={undefined}
         uiContext={uiContext}
-        uiState={uiState}
+        uiState={{ theme: uiContext.theme }}
       />
     );
   }
 
-  // Fallback: show basic info
   return (
     <Box p="4">
       <Flex direction="column" gap="3">
         <Box>
           <Text size="1" color="gray" mb="1">Request</Text>
           <Code size="2" style={{ display: 'block', padding: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {JSON.stringify(request?.data, null, 2)}
+            {JSON.stringify(request?.data ?? null, null, 2)}
           </Code>
         </Box>
         <Box>
@@ -839,28 +817,24 @@ function DetailsTab({ result }: DetailsTabProps) {
   );
 }
 
-// Metadata Tab
 interface MetadataTabProps {
   result: RequestResult;
 }
 
-function MetadataTab({ result }: MetadataTabProps) {
+function MetadataTab({ result }: MetadataTabProps): ReactElement {
   return (
     <Flex direction="column" gap="3">
-      {/* Protocol Info */}
       <Box>
         <Text size="1" color="gray" style={{ display: 'block', marginBottom: '4px' }}>Protocol</Text>
-        <Text size="2">{result.metadata?.protocol || 'Unknown'}</Text>
+        <Text size="2">{result.metadata?.protocol ?? 'Unknown'}</Text>
       </Box>
 
-      {/* Timing */}
       <Box>
         <Text size="1" color="gray" style={{ display: 'block', marginBottom: '4px' }}>Duration</Text>
         <Text size="2">{result.duration}ms</Text>
       </Box>
 
-      {/* Timestamp */}
-      {result.metadata?.timestamp && (
+      {result.metadata?.timestamp !== undefined && (
         <Box>
           <Text size="1" color="gray" style={{ display: 'block', marginBottom: '4px' }}>Timestamp</Text>
           <Text size="2" style={{ fontFamily: 'var(--font-mono)' }}>
@@ -869,8 +843,7 @@ function MetadataTab({ result }: MetadataTabProps) {
         </Box>
       )}
 
-      {/* Error */}
-      {result.metadata?.error && (
+      {hasNonEmptyString(result.metadata?.error) && (
         <Box>
           <Text size="1" color="gray" style={{ display: 'block', marginBottom: '4px' }}>Error</Text>
           <Code size="2" style={{ display: 'block', padding: '8px', color: 'var(--red-11)', backgroundColor: 'var(--red-2)' }}>
@@ -879,20 +852,10 @@ function MetadataTab({ result }: MetadataTabProps) {
         </Box>
       )}
 
-      {/* Request ID */}
       <Box>
         <Text size="1" color="gray" style={{ display: 'block', marginBottom: '4px' }}>Request ID</Text>
         <Text size="1" style={{ fontFamily: 'var(--font-mono)' }}>{result.requestId}</Text>
       </Box>
     </Flex>
   );
-}
-
-// Utility function
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }

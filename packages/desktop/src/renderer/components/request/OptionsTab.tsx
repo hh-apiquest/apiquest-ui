@@ -5,22 +5,32 @@ import { RuntimeOptionsSettings } from './RuntimeOptionsSettings';
 import { ProtocolOptionsSettings } from './ProtocolOptionsSettings';
 import { Text } from '@radix-ui/themes';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import type { Collection } from '@apiquest/types';
+import type { Collection, CollectionItem, RuntimeOptions } from '@apiquest/types';
+import type { PluginUIContext, ReactiveUIState } from '@apiquest/plugin-ui-types';
 
-interface OptionsTabProps {
-  resource: any; // The full resource (request/folder/collection) object
-  onChange: (updated: any) => void;
-  uiContext: any;
-  uiState?: any;
+type OptionableResource = CollectionItem | Collection;
+
+function isCollectionItemResource(resource: OptionableResource): resource is CollectionItem {
+  return 'type' in resource;
+}
+
+interface OptionsTabProps<TResource extends OptionableResource> {
+  resource: TResource;
+  onChange: (updated: TResource) => void;
+  uiContext: PluginUIContext;
+  uiState?: ReactiveUIState;
   allItems?: Array<{ id: string; name: string; type: 'folder' | 'request' }>; // For dependencies
   currentItemId?: string; // For dependencies
   resourceType?: 'request' | 'folder' | 'collection';
   collection?: Collection;
 }
 
-export function OptionsTab({ resource, onChange, uiContext, uiState, allItems = [], currentItemId = '', resourceType = 'request', collection }: OptionsTabProps) {
+export function OptionsTab<TResource extends OptionableResource>({ resource, onChange, uiContext, uiState, allItems = [], currentItemId = '', resourceType = 'request', collection }: OptionsTabProps<TResource>): React.ReactElement {
   // Get runtime options from resource (all types have this per schema)
-  const options = resource.options || {};
+  const options: RuntimeOptions = resource.options ?? {};
+  const handleCollectionItemChange = (updated: CollectionItem): void => {
+    onChange(updated as TResource);
+  };
   
   const [executionExpanded, setExecutionExpanded] = React.useState(true);
   const [protocolExpanded, setProtocolExpanded] = React.useState(false);
@@ -51,19 +61,23 @@ export function OptionsTab({ resource, onChange, uiContext, uiState, allItems = 
         
         <Collapsible.Content>
           <div className="pt-4">
-            <ExecutionSettings
-              resource={resource}
-              onChange={onChange}
-              allItems={allItems}
-              currentItemId={currentItemId}
-              collection={collection}
-            />
+            {isCollectionItemResource(resource) ? (
+              <ExecutionSettings
+                resource={resource}
+                onChange={handleCollectionItemChange}
+                allItems={allItems}
+                currentItemId={currentItemId}
+                collection={collection}
+              />
+            ) : (
+              <Text size="2" color="gray">Execution control is only available for folders and requests.</Text>
+            )}
           </div>
         </Collapsible.Content>
       </Collapsible.Root>
 
       {/* Protocol-specific Options Section */}
-      {collection?.protocol && (
+      {collection?.protocol !== undefined && collection.protocol !== '' && (
         <Collapsible.Root open={protocolExpanded} onOpenChange={setProtocolExpanded}>
           <Collapsible.Trigger asChild>
             <button

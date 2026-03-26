@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, type ReactElement } from 'react';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import { TextField } from '@radix-ui/themes';
 import { TrashIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
@@ -17,16 +17,16 @@ export interface ParamsEditorProps {
   onEditorStateChange?: (state: ParamsEditorState) => void;
 }
 
-export function ParamsEditor({ params, onChange, generatedParams, editorState, onEditorStateChange }: ParamsEditorProps) {
+export function ParamsEditor({ params, onChange, generatedParams, editorState, onEditorStateChange }: ParamsEditorProps): ReactElement {
   // Controlled mode: use editorState from parent; uncontrolled: local state
   const [localGeneratedVisible, setLocalGeneratedVisible] = useState(false);
   const generatedVisible = editorState !== undefined
     ? (editorState.generatedVisible ?? false)
     : localGeneratedVisible;
 
-  const setGeneratedVisible = (v: boolean | ((prev: boolean) => boolean)) => {
+  const setGeneratedVisible = (v: boolean | ((prev: boolean) => boolean)): void => {
     const next = typeof v === 'function' ? v(generatedVisible) : v;
-    if (onEditorStateChange) {
+    if (onEditorStateChange !== undefined) {
       onEditorStateChange({ ...(editorState ?? {}), generatedVisible: next });
     } else {
       setLocalGeneratedVisible(next);
@@ -37,11 +37,12 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
 
-  useEffect(() => {
-    if (pendingFocus.current) {
-      const { index, field } = pendingFocus.current;
+  useEffect((): void => {
+    const pending = pendingFocus.current;
+    if (pending !== null) {
+      const { index, field } = pending;
       const el = inputRefs.current.get(`${index}-${field}`);
-      if (el) {
+      if (el !== undefined) {
         el.focus();
         el.setSelectionRange(el.value.length, el.value.length);
       }
@@ -49,12 +50,15 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
     }
   }, [params.length]);
 
-  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
-    if (el) inputRefs.current.set(`${index}-${field}`, el);
-    else inputRefs.current.delete(`${index}-${field}`);
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null): void => {
+    if (el !== null) {
+      inputRefs.current.set(`${index}-${field}`, el);
+    } else {
+      inputRefs.current.delete(`${index}-${field}`);
+    }
   };
 
-  const handleChange = (index: number, field: keyof ParamEntry, value: string | boolean) => {
+  const handleChange = (index: number, field: keyof ParamEntry, value: string | boolean): void => {
     const next = [...params];
     if (index >= next.length) {
       next.push({
@@ -73,13 +77,13 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
     onChange(next);
   };
 
-  const handleToggle = (index: number) => {
+  const handleToggle = (index: number): void => {
     const next = [...params];
     next[index] = { ...next[index], enabled: !next[index].enabled };
     onChange(next);
   };
 
-  const handleDelete = (index: number) => {
+  const handleDelete = (index: number): void => {
     onChange(params.filter((_, i) => i !== index));
   };
 
@@ -87,7 +91,7 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
   const hasGenerated = genCount > 0;
 
   const manualKeySet = new Set(
-    params.filter(r => r.enabled && r.key.trim()).map(r => r.key.toLowerCase())
+    params.filter((row) => row.enabled && row.key.trim() !== '').map((row) => row.key.toLowerCase())
   );
 
   const displayRows = [...params, { key: '', value: '', description: '', enabled: true }];
@@ -200,7 +204,7 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span className="gen-src">{entry.source}</span>
-                        {entry.description && <span className="gen-src">— {entry.description}</span>}
+                        {entry.description !== undefined && entry.description !== '' && <span className="gen-src">— {entry.description}</span>}
                         {isOverridden && <span className="gen-badge">overridden</span>}
                       </span>
                     </td>
@@ -266,7 +270,7 @@ export function ParamsEditor({ params, onChange, generatedParams, editorState, o
                 <td>
                   <TextField.Root
                     size="1"
-                    value={row.description || ''}
+                    value={row.description ?? ''}
                     onChange={(e) => handleChange(index, 'description', e.target.value)}
                     onFocus={() => setFocusedRow(index)}
                     onBlur={() => setFocusedRow(null)}

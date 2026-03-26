@@ -1,12 +1,13 @@
 // Sidebar - Simple container with tabs for Collections and Environments
+import type { ReactElement } from 'react';
 import { useWorkspace } from '../../contexts';
 import * as Tabs from '@radix-ui/react-tabs';
 import { CollectionsPanel } from './CollectionsPanel';
 import { EnvironmentsPanel } from './EnvironmentsPanel';
 
-export function Sidebar() {
+export function Sidebar(): ReactElement | null {
   const { workspace } = useWorkspace();
-  if (!workspace) return null;
+  if (workspace === null) return null;
 
   return (
     <div className="flex flex-col h-full">

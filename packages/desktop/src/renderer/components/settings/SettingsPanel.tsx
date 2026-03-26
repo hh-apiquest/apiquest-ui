@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
+import type { SettingsTab } from '../../contexts';
 import { Tabs, Text, Box } from '@radix-ui/themes';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import { useScreenMode } from '../../contexts';
@@ -7,7 +8,7 @@ import { ToolsSettings } from './ToolsSettings';
 import { ImporterSettings } from './ImporterSettings';
 import { AISettings } from './AISettings';
 
-export function SettingsPanel() {
+export function SettingsPanel(): ReactElement {
   const { setMode, settingsInitialTab } = useScreenMode();
   const [activeTab, setActiveTab] = React.useState(settingsInitialTab);
 
@@ -37,7 +38,7 @@ export function SettingsPanel() {
       
      <div className="flex flex-1 overflow-hidden">
       {/* Vertical tabs on the left */}
-      <Tabs.Root value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} orientation="vertical" className="flex h-full w-full">
+       <Tabs.Root value={activeTab} onValueChange={(value: string) => setActiveTab(value as SettingsTab)} orientation="vertical" className="flex h-full w-full">
         <Tabs.List 
           className="flex flex-col border-r" 
           style={{ 

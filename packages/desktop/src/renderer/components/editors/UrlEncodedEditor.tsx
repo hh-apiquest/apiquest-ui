@@ -1,30 +1,25 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, type ReactElement } from 'react';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import { TextField } from '@radix-ui/themes';
 import { TrashIcon } from '@heroicons/react/24/outline';
-
-interface KeyValuePair {
-  disabled?: boolean;
-  key: string;
-  value: string;
-  description?: string;
-}
+import type { UrlEncodedEntry } from '@apiquest/plugin-ui-types';
 
 export interface UrlEncodedEditorProps {
-  data: KeyValuePair[];
-  onChange: (data: KeyValuePair[]) => void;
+  data: UrlEncodedEntry[];
+  onChange: (data: UrlEncodedEntry[]) => void;
 }
 
-export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
+export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps): ReactElement {
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const pendingFocus = useRef<{ index: number; field: 'key' | 'value' } | null>(null);
 
-  useEffect(() => {
-    if (pendingFocus.current) {
-      const { index, field } = pendingFocus.current;
+  useEffect((): void => {
+    const pending = pendingFocus.current;
+    if (pending !== null) {
+      const { index, field } = pending;
       const el = inputRefs.current.get(`${index}-${field}`);
-      if (el) {
+      if (el !== undefined) {
         el.focus();
         el.setSelectionRange(el.value.length, el.value.length);
       }
@@ -32,12 +27,15 @@ export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
     }
   }, [data.length]);
 
-  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null) => {
-    if (el) inputRefs.current.set(`${index}-${field}`, el);
-    else inputRefs.current.delete(`${index}-${field}`);
+  const setInputRef = (index: number, field: 'key' | 'value', el: HTMLInputElement | null): void => {
+    if (el !== null) {
+      inputRefs.current.set(`${index}-${field}`, el);
+    } else {
+      inputRefs.current.delete(`${index}-${field}`);
+    }
   };
 
-  const handleChange = (index: number, field: 'key' | 'value' | 'description', value: string) => {
+  const handleChange = (index: number, field: 'key' | 'value' | 'description', value: string): void => {
     const next = [...data];
     if (index >= next.length) {
       next.push({
@@ -48,7 +46,7 @@ export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
       });
       pendingFocus.current = {
         index: next.length - 1,
-        field: field === 'description' ? 'key' : field as 'key' | 'value',
+        field: field === 'description' ? 'key' : field,
       };
     } else {
       next[index] = { ...next[index], [field]: value };
@@ -56,13 +54,13 @@ export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
     onChange(next);
   };
 
-  const handleToggle = (index: number) => {
+  const handleToggle = (index: number): void => {
     const next = [...data];
-    next[index] = { ...next[index], disabled: !next[index].disabled };
+    next[index] = { ...next[index], disabled: next[index].disabled !== true };
     onChange(next);
   };
 
-  const handleDelete = (index: number) => {
+  const handleDelete = (index: number): void => {
     onChange(data.filter((_, i) => i !== index));
   };
 
@@ -126,7 +124,7 @@ export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
             const isEmptyRow = index === data.length;
             const isActive = isEmptyRow && focusedRow === index;
             // disabled is inverted relative to headers/params - 'disabled: true' means off
-            const isEnabled = !row.disabled;
+            const isEnabled = row.disabled !== true;
             const isDisabled = !isEnabled && !isEmptyRow;
 
             const rowKey = isEmptyRow ? 'add-row' : `ue-row-${index}`;
@@ -191,7 +189,7 @@ export function UrlEncodedEditor({ data, onChange }: UrlEncodedEditorProps) {
                 <td>
                   <TextField.Root
                     size="1"
-                    value={row.description || ''}
+                    value={row.description ?? ''}
                     onChange={(e) => handleChange(index, 'description', e.target.value)}
                     onFocus={() => setFocusedRow(index)}
                     onBlur={() => setFocusedRow(null)}

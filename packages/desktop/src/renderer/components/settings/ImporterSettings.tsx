@@ -1,19 +1,25 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
 import { Text, Card, Flex, Box } from '@radix-ui/themes';
 import { pluginManagerService, pluginLoader } from '../../services';
+import type { IImporterPluginUI } from '@apiquest/plugin-ui-types';
 
-export function ImporterSettings() {
-  const [entries, setEntries] = React.useState<Array<{ packageName: string; plugin: any }>>([]);
+type ImporterEntry = {
+  packageName: string;
+  plugin: IImporterPluginUI;
+};
+
+export function ImporterSettings(): ReactElement {
+  const [entries, setEntries] = React.useState<ImporterEntry[]>([]);
   const [pluginSettings, setPluginSettings] = React.useState<Record<string, Record<string, unknown> | undefined>>({});
 
-  const reloadEntries = React.useCallback(() => {
-    setEntries(pluginManagerService.getAllImporterPluginEntries());
+  const reloadEntries = React.useCallback((): void => {
+    setEntries(pluginManagerService.getAllImporterPluginEntries() as ImporterEntry[]);
   }, []);
 
   React.useEffect(() => {
     reloadEntries();
 
-    const onReload = () => reloadEntries();
+    const onReload = (): void => reloadEntries();
     pluginManagerService.on('pluginsReloaded', onReload);
     pluginManagerService.on('pluginsLoaded', onReload);
     pluginManagerService.on('importerPluginRegistered', onReload);
@@ -28,7 +34,7 @@ export function ImporterSettings() {
   React.useEffect(() => {
     let active = true;
 
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<void> => {
       const next: Record<string, Record<string, unknown> | undefined> = {};
       for (const entry of entries) {
         next[entry.packageName] = await pluginManagerService.getPluginSettings(entry.packageName);
@@ -61,9 +67,10 @@ export function ImporterSettings() {
         ) : entries.map(({ packageName, plugin }) => {
           const renderedSettings = plugin.renderSettings?.(
             pluginSettings[packageName],
-            async (nextSettings: Record<string, unknown> | undefined) => {
-              await pluginManagerService.setPluginSettings(packageName, nextSettings);
-              setPluginSettings((prev) => ({ ...prev, [packageName]: nextSettings }));
+            (nextSettings: Record<string, unknown> | undefined) => {
+              void pluginManagerService.setPluginSettings(packageName, nextSettings).then(() => {
+                setPluginSettings((prev) => ({ ...prev, [packageName]: nextSettings }));
+              });
             },
             uiContext
           );

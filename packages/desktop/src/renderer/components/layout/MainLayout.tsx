@@ -1,5 +1,5 @@
 // MainLayout - Compact three-panel layout
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties, type ReactElement } from 'react';
 import { useTheme, useScreenMode } from '../../contexts';
 import { useTabNavigation } from '../../contexts/TabContext';
 import { AppBar } from './AppBar';
@@ -13,7 +13,7 @@ import { RunnerExecution } from '../runner/RunnerExecution';
 import { WorkspaceManager } from '../workspace';
 import { SettingsPanel } from '../settings/SettingsPanel';
 
-export function MainLayout() {
+export function MainLayout(): ReactElement {
   const { actualTheme } = useTheme();
   const { tabs, getActiveTab } = useTabNavigation();
   const { mode } = useScreenMode();
@@ -24,22 +24,22 @@ export function MainLayout() {
   
   const activeTab = getActiveTab();
 
-  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
-  const startSidebarResize = (e: React.PointerEvent) => {
+  const startSidebarResize = (e: React.PointerEvent): void => {
     e.preventDefault();
     e.stopPropagation();
 
     const startX = e.clientX;
     const startWidth = sidebarWidth;
 
-    const onMove = (ev: PointerEvent) => {
+    const onMove = (ev: PointerEvent): void => {
       const delta = ev.clientX - startX;
       const next = clamp(startWidth + delta, 200, 700);
       setSidebarWidth(next);
     };
 
-    const onUp = () => {
+    const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -48,19 +48,19 @@ export function MainLayout() {
     window.addEventListener('pointerup', onUp);
   };
 
-  const startConsoleResize = (e: React.PointerEvent) => {
+  const startConsoleResize = (e: React.PointerEvent): void => {
     e.preventDefault();
     e.stopPropagation();
 
     const rootRect = rootRef.current?.getBoundingClientRect();
-    if (!rootRect) return;
+    if (rootRect === undefined) return;
 
-    const onMove = (ev: PointerEvent) => {
+    const onMove = (ev: PointerEvent): void => {
       const nextHeight = clamp(rootRect.bottom - ev.clientY, 120, Math.max(120, rootRect.height - 150));
       setConsoleHeight(nextHeight);
     };
 
-    const onUp = () => {
+    const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
@@ -84,12 +84,12 @@ export function MainLayout() {
               <div
                 className="resize-bar"
                 onPointerDown={startSidebarResize}
-                style={{ width:'1px', cursor: 'ew-resize', WebkitAppRegion: 'no-drag' } as any}
+                style={{ width: '1px', cursor: 'ew-resize', WebkitAppRegion: 'no-drag' } as CSSProperties}
               />
 
               <main style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 <TabBar />
-                {activeTab ? (
+                {activeTab !== null ? (
                   activeTab.type === 'request' ? (
                     <RequestEditor tab={activeTab} />
                   ) : activeTab.type === 'collection' ? (
@@ -114,7 +114,7 @@ export function MainLayout() {
               <div
                 className="resize-bar"
                 onPointerDown={startConsoleResize}
-                style={{ height:'1px', cursor: 'ns-resize', WebkitAppRegion: 'no-drag' } as any}
+                style={{ height: '1px', cursor: 'ns-resize', WebkitAppRegion: 'no-drag' } as CSSProperties}
               />
             )}
 

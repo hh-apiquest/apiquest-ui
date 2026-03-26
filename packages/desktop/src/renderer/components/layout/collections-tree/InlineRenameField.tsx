@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import type { ReactElement } from 'react';
 import { TextField } from '@radix-ui/themes';
 
 type InlineRenameFieldProps = {
@@ -15,7 +16,7 @@ export function InlineRenameField({
   onChange,
   onSubmit,
   onCancel,
-}: InlineRenameFieldProps) {
+}: InlineRenameFieldProps): ReactElement {
   return (
     <TextField.Root
       ref={inputRef}

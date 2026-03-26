@@ -6,34 +6,86 @@ import { useWorkspace, useTheme } from '../../contexts';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import * as Tabs from '@radix-ui/react-tabs';
 import type { Tab } from '../../contexts/TabContext';
-import type { Collection } from '@apiquest/types';
+import type { Auth, Collection, CollectionItem, Folder } from '@apiquest/types';
 import { OptionsTab } from '../request/OptionsTab';
 import { resolveInheritedAuth } from '../../utils/authInheritance';
+import type { ProtocolPluginEventDefinition, ProtocolPluginWithEvents } from '../../types/plugin-loader';
 
 interface FolderEditorProps {
   tab: Tab;
 }
 
-export function FolderEditor({ tab }: FolderEditorProps) {
+interface CollectionDependencyItem {
+  id: string;
+  name: string;
+  type: 'folder' | 'request';
+}
+
+function isFolderItem(item: CollectionItem): item is Folder {
+  return item.type === 'folder';
+}
+
+function findFolderInItems(items: CollectionItem[], folderId: string): Folder | null {
+  for (const item of items) {
+    if (isFolderItem(item) && item.id === folderId) {
+      return item;
+    }
+
+    if (isFolderItem(item)) {
+      const found = findFolderInItems(item.items, folderId);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractCollectionItems(items: CollectionItem[]): CollectionDependencyItem[] {
+  const allItems: CollectionDependencyItem[] = [];
+
+  for (const item of items) {
+    if (item.type === 'request' || item.type === 'folder') {
+      allItems.push({ id: item.id, name: item.name, type: item.type });
+    }
+
+    if (item.type === 'folder') {
+      allItems.push(...extractCollectionItems(item.items));
+    }
+  }
+
+  return allItems;
+}
+
+function isAuth(value: unknown): value is Auth {
+  return typeof value === 'object' && value !== null && 'type' in value;
+}
+
+function isFolderDraft(value: unknown): value is Folder {
+  return typeof value === 'object' && value !== null && 'type' in value && 'items' in value && 'id' in value;
+}
+
+export function FolderEditor({ tab }: FolderEditorProps): React.ReactElement {
   const { setDirty, setName } = useTabStatusActions();
   const { registerSaveHandler, registerDiscardHandler } = useTabEditorBridge();
   const { saveResourceState, clearResourceState, getResourceState, updateTabUIState, setTabEditorState, getTabEditorState, clearTabEditorState } = useTabNavigation();
   const { workspace, getCollection, updateFolder, clearCollectionCache, refreshWorkspace } = useWorkspace();
   const { actualTheme } = useTheme();
-  const [folder, setFolder] = useState<any>(null);
+  const [folder, setFolder] = useState<Folder | null>(null);
   // Stable ref so handleAutoSave never captures a stale folder closure.
-  const folderRef = useRef<any>(null);
+  const folderRef = useRef<Folder | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
-  const [collectionItems, setCollectionItems] = useState<Array<{ id: string; name: string; type: 'folder' | 'request' }>>([]);
+  const [collectionItems, setCollectionItems] = useState<CollectionDependencyItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab || 'auth');
+  const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab ?? 'auth');
   
   // Get UI context for tab components (memoized to prevent re-creating on every render)
   const uiContext = useMemo(() => pluginLoader.getUIContext(), []);
 
   // Sync local state with tab.uiState on tab changes
   useEffect(() => {
-    const newActiveSubTab = tab.uiState?.activeSubTab || 'auth';
+    const newActiveSubTab = tab.uiState?.activeSubTab ?? 'auth';
     setActiveSubTab(newActiveSubTab);
   }, [tab.id, tab.uiState?.activeSubTab]);
 
@@ -44,85 +96,60 @@ export function FolderEditor({ tab }: FolderEditorProps) {
 
   // Load folder from workspace
   useEffect(() => {
-    const loadFolder = async () => {
-      if (!workspace) return;
+    const loadFolder = async (): Promise<void> => {
+      if (workspace === null) return;
       
       try {
         setIsLoading(true);
         const loadedCollection = await getCollection(tab.collectionId);
         setCollection(loadedCollection);
-        
-        const findFolder = (items: any[]): any => {
-          for (const item of items) {
-            if (item.id === tab.resourceId && item.items) return item;
-            if (item.items) {
-              const found = findFolder(item.items);
-              if (found) return found;
-            }
-          }
-          return null;
-        };
-        
-        // Extract all items (folders and requests) from collection for dependencies
-        const extractAllItems = (items: any[]): Array<{ id: string; name: string; type: 'folder' | 'request' }> => {
-          const allItems: Array<{ id: string; name: string; type: 'folder' | 'request' }> = [];
-          for (const item of items) {
-            if (item.type === 'request' || item.type === 'folder') {
-              allItems.push({ id: item.id, name: item.name, type: item.type });
-            }
-            if (item.type === 'folder' && item.items) {
-              allItems.push(...extractAllItems(item.items));
-            }
-          }
-          return allItems;
-        };
-        
-        setCollectionItems(extractAllItems(loadedCollection.items));
-        
-        const baseFolder = findFolder(loadedCollection.items);
-        if (!baseFolder) throw new Error('Folder not found');
+        setCollectionItems(extractCollectionItems(loadedCollection.items));
+
+        const baseFolder = findFolderInItems(loadedCollection.items, tab.resourceId);
+        if (baseFolder === null) throw new Error('Folder not found');
         
         // Primary: in-memory state from a previous tab switch.
         // Secondary: IPC session state (app restart recovery).
-        const inMemoryState = getTabEditorState(tab.id) as any;
+        const inMemoryState = getTabEditorState(tab.id);
+        const draftFolder = isFolderDraft(inMemoryState) ? inMemoryState : undefined;
         
-        let finalFolder: any;
-        if (inMemoryState) {
-          finalFolder = inMemoryState;
+        let finalFolder: Folder;
+        if (draftFolder !== undefined) {
+          finalFolder = draftFolder;
           setDirty(tab.id, true);
         } else {
           const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
           finalFolder = {
             ...baseFolder,
-            name: sessionState?.name || baseFolder.name,
-            auth: sessionState?.auth ?? baseFolder.auth,
+            name: sessionState?.name ?? baseFolder.name,
+            auth: isAuth(sessionState?.auth) ? sessionState.auth : baseFolder.auth,
             folderPreScript: sessionState?.folderPreScript ?? baseFolder.folderPreScript ?? '',
             folderPostScript: sessionState?.folderPostScript ?? baseFolder.folderPostScript ?? '',
             preRequestScript: sessionState?.preRequestScript ?? baseFolder.preRequestScript ?? '',
             postRequestScript: sessionState?.postRequestScript ?? baseFolder.postRequestScript ?? ''
           };
-          if (sessionState) {
+          if (sessionState !== null) {
             setDirty(tab.id, true);
           }
         }
         
         setFolder(finalFolder);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to load folder:', error);
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadFolder();
+    void loadFolder();
   }, [tab.id]);
 
   // Register save handler for TabBar close flow
   useEffect(() => {
-    if (!workspace) return;
+    if (workspace === null) return;
 
     const unregister = registerSaveHandler(tab.id, async () => {
-      if (!folderRef.current) return;
+      if (folderRef.current === null) return;
       const currentFolder = folderRef.current;
       await updateFolder(tab.collectionId, tab.resourceId, currentFolder);
       setDirty(tab.id, false);
@@ -137,8 +164,8 @@ export function FolderEditor({ tab }: FolderEditorProps) {
 
   // Stable auto-save callback — does NOT depend on `folder` state directly.
   // Reads folderRef.current to prevent useAutoSave's cleanup from firing on every change.
-  const handleAutoSave = useCallback(async () => {
-    if (!workspace || !folderRef.current) return;
+  const handleAutoSave = useCallback(async (): Promise<void> => {
+    if (workspace === null || folderRef.current === null) return;
     const currentFolder = folderRef.current;
     
     try {
@@ -151,7 +178,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
         preRequestScript: currentFolder.preRequestScript,
         postRequestScript: currentFolder.postRequestScript
       });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('AutoSave failed:', error);
     }
   }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
@@ -159,7 +186,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
   const { trigger: triggerAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
     delay: 1000,
-    enabled: !!workspace && !!folder
+    enabled: workspace !== null && folder !== null
   });
 
   useEffect(() => {
@@ -171,12 +198,12 @@ export function FolderEditor({ tab }: FolderEditorProps) {
     return unregisterDiscard;
   }, [registerDiscardHandler, tab.id, cancelAutoSave, clearTabEditorState]);
 
-  const handleFolderChange = (updatedFolder: any) => {
+  const handleFolderChange = (updatedFolder: Folder): void => {
     setFolder(updatedFolder);
     // Immediately store in in-memory tab state — primary persistence mechanism for tab switches.
     setTabEditorState(tab.id, updatedFolder);
     setDirty(tab.id, true);
-    if (updatedFolder?.name) {
+    if (updatedFolder.name !== '') {
       setName(tab.id, updatedFolder.name);
     }
     triggerAutoSave();
@@ -186,7 +213,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
     return <div className="flex items-center justify-center h-full"><div className="text-sm text-gray-500">Loading...</div></div>;
   }
 
-  if (!folder) {
+  if (folder === null) {
     return <div className="flex items-center justify-center h-full text-gray-500">Folder not found</div>;
   }
 
@@ -204,7 +231,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
       {/* Header */}
       <div className="flex items-center gap-2 p-4 border-b" style={{ borderColor: 'var(--gray-6)' }}>
         <div className="flex-1">
-          <h2 className="text-lg font-semibold">{folder.name || 'Folder'}</h2>
+          <h2 className="text-lg font-semibold">{folder.name !== '' ? folder.name : 'Folder'}</h2>
           <p className="text-xs mt-1" style={{ color: 'var(--gray-9)' }}>
             Configure folder-level authentication and scripts
           </p>
@@ -265,7 +292,7 @@ export function FolderEditor({ tab }: FolderEditorProps) {
                 resourceType="folder"
                 allItems={collectionItems}
                 currentItemId={tab.resourceId}
-                collection={collection || undefined}
+                collection={collection ?? undefined}
               />
             </Tabs.Content>
           </div>
@@ -276,13 +303,21 @@ export function FolderEditor({ tab }: FolderEditorProps) {
 }
 
 // Auth Tab Component for Folder
-function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }: any) {
+interface FolderAuthTabProps {
+  folder: Folder;
+  onChange: (folder: Folder) => void;
+  uiContext: ReturnType<typeof pluginLoader.getUIContext>;
+  supportedAuthTypes: string[];
+  collection: Collection | null;
+}
+
+function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }: FolderAuthTabProps): React.ReactElement {
   const { React, Radix } = uiContext;
   
   // Compute auth type: none (explicit), inherit (missing/type:'inherit'), or concrete type
   const authType = React.useMemo(() => {
     if (folder.auth?.type === 'none') return 'none';
-    if (!folder.auth || folder.auth.type === 'inherit') return 'inherit';
+    if (folder.auth === undefined || folder.auth.type === 'inherit') return 'inherit';
     return folder.auth.type;
   }, [folder.auth]);
   
@@ -300,40 +335,45 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
   
   // Resolve inherited auth when type is 'inherit'
  const inheritedAuth = React.useMemo(() => {
-    if (authType !== 'inherit' || !collection) return null;
+    if (authType !== 'inherit' || collection === null) return null;
     return resolveInheritedAuth(collection, folder.id);
    }, [authType, collection, folder.id]);
   
   // Determine which auth to display
   const displayAuth = authType === 'inherit' ? inheritedAuth?.auth : folder.auth;
-  const displayAuthType = displayAuth?.type || 'none';
+  const displayAuthType = displayAuth?.type ?? 'none';
   
   // Get the auth plugin UI
   const authPluginUI = React.useMemo(() => {
-    if (displayAuthType === 'none' || displayAuthType === 'inherit') return null;
+    if (displayAuthType === 'none' || displayAuthType === 'inherit') return undefined;
     return pluginLoader.getAuthPluginUI(displayAuthType);
   }, [displayAuthType]);
   
   // Get auth data
   const authData = React.useMemo(() => {
-    if (displayAuthType === 'none' || displayAuthType === 'inherit' || !authPluginUI) return {};
-    if (displayAuth?.data) return displayAuth.data;
-    return authPluginUI.createDefault ? authPluginUI.createDefault() : {};
+    if (displayAuthType === 'none' || displayAuthType === 'inherit' || authPluginUI === undefined) return {};
+    if (displayAuth?.data !== undefined) return displayAuth.data;
+    return authPluginUI.createDefault();
   }, [displayAuthType, displayAuth, authPluginUI]);
   
   // Handle auth data change
-  const handleAuthDataChange = (newData: any) => {
+  const handleAuthDataChange = (newData: unknown): void => {
+    const normalizedAuthData: Record<string, unknown> =
+      typeof newData === 'object' && newData !== null
+        ? (newData as Record<string, unknown>)
+        : {};
+
     onChange({
       ...folder,
       auth: {
         type: displayAuthType,
-        data: newData
+        data: normalizedAuthData
       }
     });
   };
   
   // Render auth form
-  const renderAuthForm = () => {
+  const renderAuthForm = (): React.ReactElement => {
     if (authType === 'none') {
       return (
         <div className="flex-1 flex items-center justify-center text-gray-400">
@@ -346,7 +386,7 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
     }
     
     if (authType === 'inherit') {
-      if (!inheritedAuth || !inheritedAuth.auth) {
+      if (inheritedAuth?.auth === null || inheritedAuth === null) {
         return (
           <div className="flex-1 flex items-center justify-center text-gray-400">
             <div className="text-center">
@@ -357,7 +397,7 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
         );
       }
       
-      if (!authPluginUI) {
+      if (authPluginUI === undefined) {
         return (
           <div className="flex-1 flex items-center justify-center text-red-500">
             <div className="text-sm">Auth plugin UI not found for type: {displayAuthType}</div>
@@ -377,7 +417,7 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
       );
     }
 
-    if (!authPluginUI) {
+    if (authPluginUI === undefined) {
       return (
         <div className="flex-1 flex items-center justify-center text-red-500">
           <div className="text-sm">Auth plugin UI not found for type: {authType}</div>
@@ -415,11 +455,17 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
             } else {
               // Concrete auth type
               const newAuthPluginUI = pluginLoader.getAuthPluginUI(value);
+              const createdAuthData = newAuthPluginUI?.createDefault() ?? {};
+              const normalizedAuthData: Record<string, unknown> =
+                typeof createdAuthData === 'object' && createdAuthData !== null
+                  ? (createdAuthData as Record<string, unknown>)
+                  : {};
+
               onChange({
                 ...folder,
                 auth: {
                   type: value,
-                  data: newAuthPluginUI?.createDefault ? newAuthPluginUI.createDefault() : {}
+                  data: normalizedAuthData
                 }
               });
             }
@@ -446,11 +492,18 @@ function AuthTab({ folder, onChange, uiContext, supportedAuthTypes, collection }
 }
 
 // Scripts Tab Component for Folder
-function ScriptsTab({ folder, onChange, uiContext, protocol, theme }: any) {
+interface FolderScriptsTabProps {
+  folder: Folder;
+  onChange: (folder: Folder) => void;
+  uiContext: ReturnType<typeof pluginLoader.getUIContext>;
+  protocol: string;
+  theme: 'light' | 'dark';
+}
+
+function ScriptsTab({ folder, onChange, uiContext, protocol, theme }: FolderScriptsTabProps): React.ReactElement {
   const { React, Monaco } = uiContext;
-  
-  // Protocol-specific events (none defined yet)
-  const protocolEvents: any[] = [];
+  const protocolPlugin = pluginLoader.getProtocolPluginUI(protocol) as ProtocolPluginWithEvents | undefined;
+  const protocolEvents: ProtocolPluginEventDefinition[] = protocolPlugin?.events ?? [];
   
   // type ScriptTypeOption = 'folderPre' | 'folderPost' | 'pre' | 'post' | string;
   const [scriptType, setScriptType] = React.useState('folderPre');
@@ -462,30 +515,27 @@ function ScriptsTab({ folder, onChange, uiContext, protocol, theme }: any) {
       scriptType === 'folderPost' ? 'folder-post' :
       scriptType === 'pre' ? 'pre-request' :
       scriptType === 'post' ? 'post-request' :
-      'plugin-event';
+      'post-request';
 
     pluginLoader.setActiveScriptIntellisenseContext({
       protocol,
       ownerType: 'folder',
       phase,
-      eventName: phase === 'plugin-event' ? scriptType : undefined,
+      eventName: undefined,
     });
   }, [scriptType, protocol]);
   
   // Get script value based on type
-  const getScriptValue = () => {
-    if (scriptType === 'folderPre') return folder.folderPreScript || '';
-    if (scriptType === 'folderPost') return folder.folderPostScript || '';
-    if (scriptType === 'pre') return folder.preRequestScript || '';
-    if (scriptType === 'post') return folder.postRequestScript || '';
-    
-    // Protocol event script
-    const eventScript = folder.scripts?.find((s: any) => s.event === scriptType);
-    return eventScript?.script || '';
+  const getScriptValue = (): string => {
+    if (scriptType === 'folderPre') return folder.folderPreScript ?? '';
+    if (scriptType === 'folderPost') return folder.folderPostScript ?? '';
+    if (scriptType === 'pre') return folder.preRequestScript ?? '';
+    if (scriptType === 'post') return folder.postRequestScript ?? '';
+    return '';
   };
   
   // Update script value
-  const updateScript = (value: string) => {
+  const updateScript = (value: string): void => {
     if (scriptType === 'folderPre') {
       onChange({ ...folder, folderPreScript: value });
     } else if (scriptType === 'folderPost') {
@@ -495,17 +545,7 @@ function ScriptsTab({ folder, onChange, uiContext, protocol, theme }: any) {
     } else if (scriptType === 'post') {
       onChange({ ...folder, postRequestScript: value });
     } else {
-      // Update protocol event script
-      const scripts = folder.scripts || [];
-      const existingIndex = scripts.findIndex((s: any) => s.event === scriptType);
-      
-      if (existingIndex >= 0) {
-        scripts[existingIndex] = { event: scriptType, script: value };
-      } else {
-        scripts.push({ event: scriptType, script: value });
-      }
-      
-      onChange({ ...folder, scripts });
+      return;
     }
   };
     
@@ -563,28 +603,7 @@ function ScriptsTab({ folder, onChange, uiContext, protocol, theme }: any) {
           </div>
         </div>
 
-        {/* Protocol-specific event scripts */}
-        {protocolEvents.length > 0 && (
-          <div>
-            <div className="text-xs font-semibold mb-1 px-2 script-tab-label">
-              {protocol.toUpperCase()} Events
-            </div>
-            <div className="space-y-1">
-              {protocolEvents.map(evt => (
-                <button
-                  key={evt.name}
-                  onClick={() => setScriptType(evt.name)}
-                  className="w-full text-left px-3 py-2 text-sm rounded script-tab-button"
-                  data-active={scriptType === evt.name}
-                  title={evt.description}
-                  type="button"
-                >
-                  {evt.name + (evt.required ? ' *' : '')}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Protocol-specific event scripts are not supported on Folder by the current shared Folder contract. */}
       </div>
 
       {/* Right: Monaco editor */}

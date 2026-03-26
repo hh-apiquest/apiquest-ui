@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
 import { Text, TextField, Switch, Button, Flex, Box } from '@radix-ui/themes';
 import { useSettings } from '../../contexts';
 
-export function AISettings() {
+export function AISettings(): ReactElement {
   const { settings, update } = useSettings();
 
   const [enabled, setEnabled] = React.useState<boolean>(settings?.ai?.enabled ?? false);
@@ -31,8 +31,10 @@ export function AISettings() {
     model !== (settings?.ai?.model ?? 'gpt-5') ||
     timeoutMs !== String(settings?.ai?.timeoutMs ?? 30000);
 
-  const handleSave = async () => {
-    if (!timeoutIsValid) return;
+  const handleSave = async (): Promise<void> => {
+    if (!timeoutIsValid) {
+      return;
+    }
 
     setSaving(true);
     setSaved(false);
@@ -47,7 +49,7 @@ export function AISettings() {
         }
       });
       setSaved(true);
-      window.setTimeout(() => setSaved(false), 1500);
+      window.setTimeout((): void => setSaved(false), 1500);
     } finally {
       setSaving(false);
     }
@@ -127,7 +129,9 @@ export function AISettings() {
           >
             Reset
           </Button>
-          <Button onClick={handleSave} disabled={saving || !isDirty || !timeoutIsValid}>
+          <Button onClick={() => {
+            void handleSave();
+          }} disabled={saving || !isDirty || !timeoutIsValid}>
             {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
           </Button>
         </Flex>

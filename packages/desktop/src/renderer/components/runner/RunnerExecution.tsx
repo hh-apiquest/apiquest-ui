@@ -1,152 +1,92 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
 import { Box, Flex, Text, Button, Separator, Tabs } from '@radix-ui/themes';
 import { PlayIcon, StopIcon } from '@heroicons/react/24/outline';
 import type { Tab, RunnerMetadata } from '../../contexts/TabContext';
 import { Runner } from './Runner';
 import { useWorkspace, useTabNavigation, useTabStatusActions } from '../../contexts';
 import { RunnerTab } from '../collection/RunnerTab';
-import type { Collection } from '@apiquest/types';
+import type { RunnerCollection, RunnerTabRunPayload } from '../../types/runner-tab';
+import type { ExecutionData } from '../../../types/execution';
 
 interface RunnerExecutionProps {
   tab: Tab;
 }
 
-export function RunnerExecution({ tab }: RunnerExecutionProps) {
+interface RunnerExecutionEditorState {
+  collection: RunnerCollection;
+}
+
+function isRunnerMetadata(metadata: Tab['metadata']): metadata is RunnerMetadata {
+  return metadata !== undefined && metadata !== null && 'runId' in metadata;
+}
+
+function isRunnerExecutionEditorState(value: unknown): value is RunnerExecutionEditorState {
+  return typeof value === 'object' && value !== null && 'collection' in value;
+}
+
+function createEmptyExecutionData(): ExecutionData {
+  return {
+    executionId: crypto.randomUUID(),
+    status: 'idle',
+    startTime: Date.now(),
+    events: []
+  };
+}
+
+function generateRunId(): string {
+  return `run-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+export function RunnerExecution({ tab }: RunnerExecutionProps): ReactElement {
   const { workspace } = useWorkspace();
   const { clearTabExecution, updateTabExecution, setTabEditorState, getTabEditorState } = useTabNavigation();
   const { setMetadata } = useTabStatusActions();
-  const metadata = tab.metadata as RunnerMetadata;
   const [isRunning, setIsRunning] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [activeTab, setActiveTab] = useState('setup');
-  const [collection, setCollection] = useState<Collection | null>(null);
+  const [collection, setCollection] = useState<RunnerCollection | null>(null);
+  const metadata = isRunnerMetadata(tab.metadata) ? tab.metadata : null;
+  const metadataStatus = metadata?.status;
+  const metadataCollectionId = metadata?.collectionId ?? '';
+  const metadataSelectedRequests = metadata?.selectedRequests ?? [];
+  const metadataEnvironmentId = metadata?.config.environmentId;
+  const metadataIterations = metadata?.config.iterations ?? 1;
+  const metadataDelay = metadata?.config.delay ?? 0;
+  const metadataParallel = metadata?.config.parallel ?? false;
+  const metadataConcurrency = metadata?.config.concurrency ?? 1;
+  const metadataPersistVariables = metadata?.config.persistVariables ?? false;
+  const metadataSaveResponses = metadata?.config.saveResponses ?? false;
   
   // Track current runId for stop functionality
-  const currentRunIdRef = useRef(metadata.runId);
+  const currentRunIdRef = useRef(metadata?.runId ?? '');
   
   // Track if auto-start has been triggered to prevent double execution (dev react strict)
   const autoStartTriggeredRef = useRef(false);
 
   // Start execution automatically on mount if status is pending
-  useEffect(() => {
-    if (metadata.status === 'pending' && !hasStarted && workspace && !autoStartTriggeredRef.current) {
-      autoStartTriggeredRef.current = true;
-      handleStart();
+  const handleStart = useCallback(async (): Promise<void> => {
+    if (workspace === null || metadata === null) {
+      return;
     }
-  }, [metadata.status, hasStarted, workspace]);
 
-  useEffect(() => {
-    if (isRunning || metadata.status === 'running' || metadata.status === 'pending') {
-      setActiveTab('results');
-    }
-  }, [isRunning, metadata.status]);
-
-  useEffect(() => {
-    const loadCollection = async () => {
-      if (!workspace || !metadata.collectionId) return;
-
-      // Check in-memory state first (survives tab switches without re-loading).
-      // Each executor tab uses its own tab.id as key so multiple executors never share state.
-      const cachedCollection = (getTabEditorState(tab.id) as { collection: Collection } | undefined)?.collection;
-      if (cachedCollection !== undefined && cachedCollection !== null) {
-        setCollection(cachedCollection);
-        return;
-      }
-
-      try {
-        const loaded = await window.quest.workspace.loadCollection(workspace.id, metadata.collectionId);
-        // Seed _runnerState from metadata so RunnerTab restores the initial selection/config.
-        const seeded = {
-          ...loaded,
-          _runnerState: {
-            selectedRequests: metadata.selectedRequests,
-            config: {
-              environmentId: metadata.config.environmentId,
-              iterations: metadata.config.iterations,
-              delay: metadata.config.delay ?? 0,
-              parallel: metadata.config.parallel ?? false,
-              concurrency: metadata.config.concurrency ?? 1,
-              persistVariables: metadata.config.persistVariables ?? false,
-              saveResponses: metadata.config.saveResponses ?? false
-            }
-          }
-        };
-        setCollection(seeded);
-        setTabEditorState(tab.id, { collection: seeded });
-      } catch (error) {
-        console.error('Failed to load collection for runner execution:', error);
-      }
-    };
-
-    loadCollection();
-  }, [workspace, metadata.collectionId]);
-
-  // Listen to execution events to update isRunning state and metadata status
-  useEffect(() => {
-    const events = tab.execution?.events || [];
-    const lastEvent = events[events.length - 1];
-    
-    if (lastEvent) {
-      const currentMetadata = tab.metadata as RunnerMetadata;
-      
-      if (lastEvent.type === 'beforeRun') {
-        setIsRunning(true);
-        setMetadata(tab.id, {
-          ...currentMetadata,
-          status: 'running'
-        } as RunnerMetadata);
-      } else if (lastEvent.type === 'afterRun') {
-        setIsRunning(false);
-        setMetadata(tab.id, {
-          ...currentMetadata,
-          status: 'completed',
-          completedAt: new Date()
-        } as RunnerMetadata);
-      } else if (lastEvent.type === 'error' || lastEvent.type === 'runnerError') {
-        setIsRunning(false);
-        setMetadata(tab.id, {
-          ...currentMetadata,
-          status: 'error',
-          completedAt: new Date()
-        } as RunnerMetadata);
-      }
-    }
-  }, [tab.execution?.events]);
-
-  const handleStart = async () => {
-    if (!workspace) return;
-    
-    // Generate new runId for re-runs
     let runId = metadata.runId;
     if (hasStarted) {
-      // Clear previous execution state
       clearTabExecution(tab.id);
-      
-      // Generate new runId
-      runId = `run-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Update current runId ref
+      runId = generateRunId();
       currentRunIdRef.current = runId;
-      
-      // Recreate execution object with fresh state
-      updateTabExecution(tab.id, {
-        executionId: crypto.randomUUID(),
-        status: 'idle',
-        startTime: Date.now(),
-        events: []
-      });
-      
-      // Update metadata with new runId and reset status
+
+      updateTabExecution(tab.id, createEmptyExecutionData());
+
       setMetadata(tab.id, {
         ...metadata,
         runId,
         status: 'pending'
-      } as RunnerMetadata);
+      });
     }
-    
+
     setIsRunning(true);
     setHasStarted(true);
-    
+
     try {
       const result = await window.quest.runner.runCollection({
         runId,
@@ -155,49 +95,38 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
         selectedRequests: metadata.selectedRequests,
         config: metadata.config
       });
-      
+
       if (!result.success) {
         console.error('Failed to start collection run');
         setIsRunning(false);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error starting collection run:', error);
       setIsRunning(false);
     }
-  };
+  }, [workspace, metadata, hasStarted, clearTabExecution, tab.id, updateTabExecution, setMetadata]);
 
-  const handleSetupRun = async (payload: {
-    collectionId: string;
-    collectionName: string;
-    protocol: string;
-    selectedRequests: string[];
-    config: import('../../types/quest').RunConfig;
-  }) => {
-    if (!workspace) return;
+  const handleSetupRun = useCallback(async (payload: RunnerTabRunPayload): Promise<void> => {
+    if (workspace === null || metadata === null) {
+      return;
+    }
 
-    // Clear previous execution state
     clearTabExecution(tab.id);
 
-    const runId = `run-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const runId = generateRunId();
     currentRunIdRef.current = runId;
 
-    updateTabExecution(tab.id, {
-      executionId: crypto.randomUUID(),
-      status: 'idle',
-      startTime: Date.now(),
-      events: []
-    });
+    updateTabExecution(tab.id, createEmptyExecutionData());
 
     setMetadata(tab.id, {
       ...metadata,
       runId,
       collectionId: payload.collectionId,
       collectionName: payload.collectionName,
-      protocol: payload.protocol,
       selectedRequests: payload.selectedRequests,
       config: payload.config,
       status: 'pending'
-    } as RunnerMetadata);
+    });
 
     setIsRunning(true);
     setHasStarted(true);
@@ -215,22 +144,131 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
         console.error('Failed to start collection run');
         setIsRunning(false);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error starting collection run:', error);
       setIsRunning(false);
     }
 
     setActiveTab('results');
-  };
+  }, [workspace, clearTabExecution, tab.id, updateTabExecution, setMetadata, metadata]);
 
-  const handleStop = async () => {
+  const handleStop = useCallback(async (): Promise<void> => {
     try {
       await window.quest.runner.stopRun(currentRunIdRef.current);
       setIsRunning(false);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error stopping run:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (metadata === null) {
+      return;
+    }
+
+    if (metadata.status === 'pending' && !hasStarted && workspace !== null && !autoStartTriggeredRef.current) {
+      autoStartTriggeredRef.current = true;
+      void handleStart();
+    }
+  }, [metadataStatus, hasStarted, workspace, handleStart]);
+
+  useEffect(() => {
+    if (metadata === null) {
+      return;
+    }
+
+    if (isRunning || metadata.status === 'running' || metadata.status === 'pending') {
+      setActiveTab('results');
+    }
+  }, [isRunning, metadataStatus]);
+
+  useEffect(() => {
+    const loadCollection = async (): Promise<void> => {
+      if (workspace === null || metadata === null || metadataCollectionId === '') {
+        return;
+      }
+
+      // Check in-memory state first (survives tab switches without re-loading).
+      // Each executor tab uses its own tab.id as key so multiple executors never share state.
+      const cachedState = getTabEditorState(tab.id);
+      if (isRunnerExecutionEditorState(cachedState)) {
+        setCollection(cachedState.collection);
+        return;
+      }
+
+      try {
+        const loaded = await window.quest.workspace.loadCollection(workspace.id, metadataCollectionId);
+        // Seed _runnerState from metadata so RunnerTab restores the initial selection/config.
+        const seeded: RunnerCollection = {
+          ...loaded,
+          _runnerState: {
+            selectedRequests: metadata.selectedRequests,
+            config: {
+              environmentId: metadata.config.environmentId,
+              iterations: metadata.config.iterations,
+              delay: metadata.config.delay ?? 0,
+              parallel: metadata.config.parallel ?? false,
+              concurrency: metadata.config.concurrency ?? 1,
+              allowParallel: loaded.options?.execution?.allowParallel === true,
+              maxConcurrency: loaded.options?.execution?.maxConcurrency,
+              persistVariables: metadata.config.persistVariables ?? false,
+              saveResponses: metadata.config.saveResponses ?? false
+            }
+          }
+        };
+        setCollection(seeded);
+        setTabEditorState(tab.id, { collection: seeded });
+      } catch (error: unknown) {
+        console.error('Failed to load collection for runner execution:', error);
+      }
+    };
+
+    void loadCollection();
+  }, [workspace, metadataCollectionId, metadataSelectedRequests, metadataEnvironmentId, metadataIterations, metadataDelay, metadataParallel, metadataConcurrency, metadataPersistVariables, metadataSaveResponses, getTabEditorState, setTabEditorState, tab.id]);
+
+  // Listen to execution events to update isRunning state and metadata status
+  useEffect(() => {
+    if (metadata === null) {
+      return;
+    }
+
+    const events = tab.execution?.events ?? [];
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+
+    if (lastEvent === null) {
+      return;
+    }
+
+    if (lastEvent.type === 'beforeRun') {
+      setIsRunning(true);
+      setMetadata(tab.id, {
+        ...metadata,
+        status: 'running'
+      });
+    } else if (lastEvent.type === 'afterRun') {
+      setIsRunning(false);
+      setMetadata(tab.id, {
+        ...metadata,
+        status: 'completed',
+        completedAt: new Date()
+      });
+    } else if (lastEvent.type === 'error' || lastEvent.type === 'runnerError') {
+      setIsRunning(false);
+      setMetadata(tab.id, {
+        ...metadata,
+        status: 'error',
+        completedAt: new Date()
+      });
+    }
+  }, [tab.execution?.events, tab.id, metadata, setMetadata]);
+
+  if (metadata === null) {
+    return (
+      <Box p="3">
+        <Text size="2" color="gray">Runner metadata is unavailable.</Text>
+      </Box>
+    );
+  }
 
   return (
     <Flex direction="column" style={{ flex: 1, overflow: 'hidden' }}>
@@ -252,13 +290,13 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
           
           <Flex gap="2">
             {!isRunning && metadata.status !== 'running' && (
-              <Button size="1" onClick={handleStart} variant="soft">
+              <Button size="1" onClick={() => { void handleStart(); }} variant="soft">
                 <PlayIcon className="w-4 h-4" />
                 {hasStarted ? 'Re-run' : 'Run'}
               </Button>
             )}
             {(isRunning || metadata.status === 'running') && (
-              <Button size="1" onClick={handleStop} variant="soft" color="red">
+              <Button size="1" onClick={() => { void handleStop(); }} variant="soft" color="red">
                 <StopIcon className="w-4 h-4" />
                 Stop
               </Button>
@@ -287,16 +325,15 @@ export function RunnerExecution({ tab }: RunnerExecutionProps) {
 
           <Tabs.Content value="setup" style={{ flex: 1, overflow: 'auto' }}>
             <Box p="3">
-              {collection ? (
+              {collection !== null ? (
                 <RunnerTab
                   collection={collection}
                   onChange={(updatedCollection) => {
-                    const updated = updatedCollection as Collection;
-                    setCollection(updated);
-                    setTabEditorState(tab.id, { collection: updated });
+                    setCollection(updatedCollection);
+                    setTabEditorState(tab.id, { collection: updatedCollection });
                   }}
                   workspace={workspace}
-                  onRun={handleSetupRun}
+                  onRun={(payload) => { void handleSetupRun(payload); }}
                 />
               ) : (
                 <Flex align="center" justify="center" style={{ height: '100%' }}>

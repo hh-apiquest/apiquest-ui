@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { type ReactElement } from 'react';
 import { Text, TextField, Checkbox, Button, Select } from '@radix-ui/themes';
-import { TrashIcon } from '@heroicons/react/24/outline';
 import type { RuntimeOptions, TimeoutOptions, SSLOptions, ProxyOptions, LogLevel } from '@apiquest/types';
 
 interface RuntimeOptionsSettingsProps {
@@ -15,9 +14,9 @@ export function RuntimeOptionsSettings({
   onChange,
   protocol,
   resourceType = 'request'
-}: RuntimeOptionsSettingsProps) {
+}: RuntimeOptionsSettingsProps): ReactElement {
   
-  const updateOptions = (updates: Partial<RuntimeOptions>) => {
+  const updateOptions = (updates: Partial<RuntimeOptions>): void => {
     const updated = { ...options, ...updates };
     // Clean up undefined/null values
     (Object.keys(updated) as Array<keyof RuntimeOptions>).forEach(key => {
@@ -28,8 +27,8 @@ export function RuntimeOptionsSettings({
     onChange(Object.keys(updated).length > 0 ? updated : undefined);
   };
 
-  const updateTimeout = (field: keyof TimeoutOptions, value: string) => {
-    const numValue = value ? parseInt(value, 10) : undefined;
+  const updateTimeout = (field: keyof TimeoutOptions, value: string): void => {
+    const numValue = value !== '' ? parseInt(value, 10) : undefined;
     const timeout: TimeoutOptions = { ...options.timeout, [field]: numValue };
     // Clean up undefined values
     (Object.keys(timeout) as Array<keyof TimeoutOptions>).forEach(key => {
@@ -42,7 +41,7 @@ export function RuntimeOptionsSettings({
     });
   };
 
-  const updateSSL = (updates: Partial<SSLOptions>) => {
+  const updateSSL = (updates: Partial<SSLOptions>): void => {
     const ssl: Partial<SSLOptions> = { ...options.ssl, ...updates };
     (Object.keys(ssl) as Array<keyof SSLOptions>).forEach(key => {
       if (ssl[key] === undefined) {
@@ -54,7 +53,7 @@ export function RuntimeOptionsSettings({
     });
   };
 
-  const updateProxy = (updates: Partial<ProxyOptions>) => {
+  const updateProxy = (updates: Partial<ProxyOptions>): void => {
     const proxy: Partial<ProxyOptions> = { ...options.proxy, ...updates };
     (Object.keys(proxy) as Array<keyof ProxyOptions>).forEach(key => {
       if (proxy[key] === undefined) {
@@ -133,7 +132,7 @@ export function RuntimeOptionsSettings({
               placeholder="5"
               value={options.maxRedirects ?? ''}
               onChange={(e) => updateOptions({ 
-                maxRedirects: e.target.value ? parseInt(e.target.value, 10) : undefined 
+                maxRedirects: e.target.value !== '' ? parseInt(e.target.value, 10) : undefined 
               })}
               style={{ width: '200px' }}
             />
@@ -204,7 +203,7 @@ export function RuntimeOptionsSettings({
                     ...options.ssl?.clientCertificate,
                     cert: options.ssl?.clientCertificate?.cert ?? '',
                     key: options.ssl?.clientCertificate?.key ?? '',
-                    passphrase: e.target.value || undefined
+                    passphrase: e.target.value !== '' ? e.target.value : undefined
                   }
                 })}
               />
@@ -222,15 +221,15 @@ export function RuntimeOptionsSettings({
             onCheckedChange={(checked) => 
               updateProxy({ 
                 enabled: checked === true,
-                host: options.proxy?.host || '',
-                port: options.proxy?.port || 8080
+                host: options.proxy?.host ?? '',
+                port: options.proxy?.port ?? 8080
               })
             }
           />
           <Text size="2">Enable Proxy</Text>
         </div>
         
-        {options.proxy?.enabled && (
+        {options.proxy?.enabled === true && (
           <div className="flex flex-col gap-3 border-l-2 pl-3" style={{ borderColor: 'var(--gray-6)' }}>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
@@ -252,9 +251,9 @@ export function RuntimeOptionsSettings({
                   placeholder="8080"
                   value={options.proxy.port}
                   onChange={(e) => updateProxy({ 
-                    port: parseInt(e.target.value, 10) || 8080 
-                  })}
-                />
+                     port: e.target.value !== '' ? parseInt(e.target.value, 10) : 8080 
+                   })}
+                 />
               </div>
             </div>
             
@@ -326,7 +325,7 @@ export function RuntimeOptionsSettings({
       </div>
 
       {/* Reset Button */}
-      {options && Object.keys(options).length > 0 && (
+      {Object.keys(options).length > 0 && (
         <div className="flex justify-end pt-3 border-t" style={{ borderColor: 'var(--gray-6)' }}>
           <Button
             variant="soft"

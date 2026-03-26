@@ -1,5 +1,5 @@
 // CollectionsPanel - Collections tree with all collection management logic
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactElement } from 'react';
 import { useWorkspace, useTabNavigation, useScreenMode, useTabStatusActions } from '../../contexts';
 import {
   DndContext,
@@ -29,7 +29,7 @@ import {
   Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import { pluginManagerService, pluginLoader } from '../../services';
-import type { VariableValue } from '@apiquest/types';
+import type { Collection, CollectionItem, Folder, Request, VariableValue } from '@apiquest/types';
 import { VariableEditorDialog } from '../variables/VariableEditor';
 import { InputDialog } from '../shared/InputDialog';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
@@ -50,13 +50,43 @@ type ImportAction = {
   sourceKind: 'file' | 'directory';
 };
 
+type WorkspaceCollectionSummary = {
+  id: string;
+  name: string;
+};
+
+function isFolderItem(item: CollectionItem): item is Folder {
+  return item.type === 'folder';
+}
+
+function isRequestItem(item: CollectionItem): item is Request {
+  return item.type === 'request';
+}
+
+function findRequestInItems(items: CollectionItem[], requestId: string): Request | null {
+  for (const item of items) {
+    if (isRequestItem(item) && item.id === requestId) {
+      return item;
+    }
+
+    if (isFolderItem(item)) {
+      const found = findRequestInItems(item.items, requestId);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
 /** Build the list of available import actions from installed importer plugins. */
 function getImportActions(): ImportAction[] {
   const actions: ImportAction[] = [];
   for (const { packageName, plugin } of pluginManagerService.getAllImporterPluginEntries()) {
     for (const format of plugin.importFormats) {
       const ext = plugin.fileExtensions[format];
-      if (!ext) continue;
+      if (ext === undefined) continue;
       actions.push({
         pluginPackageName: packageName,
         format,
@@ -69,7 +99,7 @@ function getImportActions(): ImportAction[] {
   return actions;
 }
 
-export function CollectionsPanel() {
+export function CollectionsPanel(): ReactElement | null {
   const { workspace, refreshWorkspace } = useWorkspace();
   const { tabs, closeTab } = useTabNavigation();
   const { setMode } = useScreenMode();
@@ -86,9 +116,16 @@ export function CollectionsPanel() {
   );
   // Import actions list rebuilt when plugins change
   const [importActions, setImportActions] = useState<ImportAction[]>(getImportActions);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    })
+  );
 
   useEffect(() => {
-    const checkPlugins = () => {
+    const checkPlugins = (): void => {
       setHasProtocolPlugins(pluginManagerService.getAllProtocolPlugins().length > 0);
       setImportActions(getImportActions());
     };
@@ -104,22 +141,14 @@ export function CollectionsPanel() {
     };
   }, []);
 
-  if (!workspace) return null;
+  if (workspace === null) return null;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 6,
-      },
-    })
-  );
-
-  const clearDragState = () => {
+  const clearDragState = (): void => {
     setActiveDragItem(null);
     setDropPreview({ overZoneId: null, target: null, isValid: false });
   };
 
-  const closeTabsForMovedDragItem = (dragItem: TreeDragItem, target: TreeDropTarget) => {
+  const closeTabsForMovedDragItem = (dragItem: TreeDragItem, target: TreeDropTarget): void => {
     if (dragItem.sourceCollectionId === target.targetCollectionId) {
       return;
     }
@@ -136,25 +165,25 @@ export function CollectionsPanel() {
       .forEach((tab) => closeTab(tab.id));
   };
 
-  const handleDragStart = (event: DragStartEvent) => {
+  const handleDragStart = (event: DragStartEvent): void => {
     const dragItem = event.active.data.current?.dragItem as TreeDragItem | undefined;
     setActiveDragItem(dragItem ?? null);
   };
 
-  const handleDragOver = (event: DragOverEvent) => {
+  const handleDragOver = (event: DragOverEvent): void => {
     const dragItem = event.active.data.current?.dragItem as TreeDragItem | undefined;
     const target = event.over?.data.current?.dropTarget as TreeDropTarget | undefined;
     const resolvedDragItem = dragItem ?? activeDragItem;
     const resolvedTarget = target ?? null;
 
     setDropPreview({
-      overZoneId: event.over?.id ? String(event.over.id) : null,
+      overZoneId: event.over?.id !== undefined ? String(event.over.id) : null,
       target: resolvedTarget,
       isValid: isValidDropTarget(resolvedDragItem ?? null, resolvedTarget),
     });
   };
 
-  const handleDragEnd = async (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent): Promise<void> => {
     const dragItem = event.active.data.current?.dragItem as TreeDragItem | undefined;
     const target = event.over?.data.current?.dropTarget as TreeDropTarget | undefined;
     const resolvedDragItem = dragItem ?? activeDragItem;
@@ -207,7 +236,7 @@ export function CollectionsPanel() {
     format: string,
     fileExtensions: string[],
     sourceKind: 'file' | 'directory'
-  ) => {
+  ): Promise<void> => {
     try {
       const result = await window.quest.workspace.importCollection(workspace.id, {
         pluginPackageName,
@@ -231,9 +260,9 @@ export function CollectionsPanel() {
     }
   };
 
-  const handlePanelClick = (e: React.MouseEvent) => {
+  const handlePanelClick = (e: React.MouseEvent): void => {
     // Submit active rename when clicking on empty space
-    if (activeRenameId && e.target === e.currentTarget) {
+    if (activeRenameId !== null && e.target === e.currentTarget) {
       setActiveRenameId(null);
       setInlineRenameValue('');
     }
@@ -265,14 +294,14 @@ export function CollectionsPanel() {
               importActions.map((action) => (
                 <DropdownMenu.Item
                   key={`${action.pluginPackageName}::${action.format}`}
-                  onSelect={() =>
-                    handleImportWithFormat(
+                  onSelect={() => {
+                    void handleImportWithFormat(
                       action.pluginPackageName,
                       action.format,
                       action.fileExtensions,
                       action.sourceKind
-                    )
-                  }
+                    );
+                  }}
                 >
                   {action.label}
                 </DropdownMenu.Item>
@@ -341,7 +370,7 @@ export function CollectionsPanel() {
           <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={(event) => { void handleDragEnd(event); }} onDragCancel={clearDragState}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '8px' }}>
               {workspace.collections
-                .filter(c => !searchQuery || c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                .filter((collection) => searchQuery === '' || collection.name.toLowerCase().includes(searchQuery.toLowerCase()))
                 .sort((a, b) => {
                   return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
                 })
@@ -377,18 +406,18 @@ function CollectionItem({
   activeDragItem,
   dropPreview,
 }: { 
-  collection: any;
+  collection: WorkspaceCollectionSummary;
   activeRenameId: string | null;
   setActiveRenameId: (id: string | null) => void;
   inlineRenameValue: string;
   setInlineRenameValue: (value: string) => void;
   activeDragItem: TreeDragItem | null;
   dropPreview: TreeDropPreview;
-}) {
+}): ReactElement {
   const inputRef = useRef<HTMLInputElement>(null);
   const focusTimeRef = useRef<number>(0);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [collectionData, setCollectionData] = useState<any>(null);
+  const [collectionData, setCollectionData] = useState<Collection | null>(null);
   const [isUnsupported, setIsUnsupported] = useState(false);
   const [showAddRequest, setShowAddRequest] = useState(false);
   const [showAddFolder, setShowAddFolder] = useState(false);
@@ -411,7 +440,7 @@ function CollectionItem({
     overId: collection.id,
   });
 
-  const closeTabsForCollectionDeletion = () => {
+  const closeTabsForCollectionDeletion = (): void => {
     const tabIdsToClose = tabs
       .filter(tab => tab.collectionId === collection.id)
       .map(tab => tab.id);
@@ -423,33 +452,33 @@ function CollectionItem({
   useEffect(() => {
     console.log('[CollectionItem] Loading collection data for:', collection.id, collection.name);
     getCollection(collection.id)
-      .then(data => {
+      .then((data) => {
         console.log('[CollectionItem] Received collection data:', {
           id: collection.id,
           name: data.info?.name,
-          itemsCount: data.items?.length || 0,
-          items: data.items?.map((i: any) => ({ id: i.id, name: i.name, type: i.items ? 'folder' : 'request' }))
+          itemsCount: data.items.length,
+          items: data.items.map((item) => ({ id: item.id, name: item.name, type: item.type }))
         });
         setCollectionData(data);
         
         // Load collection variables
-        if (data.variables) {
+        if (data.variables !== undefined) {
           setCollectionVariables(data.variables);
         }
         
         // Check if protocol plugin is available
         const protocol = data.protocol;
-        if (protocol) {
+        if (protocol !== '') {
           const availablePlugins = pluginManagerService.getAllProtocolPlugins();
-          const isAvailable = availablePlugins.some(p => p.protocol === protocol);
+          const isAvailable = availablePlugins.some((plugin) => plugin.protocol === protocol);
           setIsUnsupported(!isAvailable);
         }
       })
-      .catch(err => console.error('Failed to load collection:', err));
+      .catch((error: unknown) => console.error('Failed to load collection:', error));
   }, [collection.id, collection, getCollection]);
 
-  const handleSaveCollectionVars = async (updatedVariables: Record<string, VariableValue>) => {
-    if (!workspace || !collectionData) return;
+  const handleSaveCollectionVars = async (updatedVariables: Record<string, VariableValue>): Promise<void> => {
+    if (workspace === null || collectionData === null) return;
     
     try {
       await window.quest.workspace.updateCollectionVariables(workspace.id, collection.id, updatedVariables);
@@ -461,12 +490,12 @@ function CollectionItem({
     }
   };
 
-  const handleStartInlineRename = () => {
+  const handleStartInlineRename = (): void => {
     setActiveRenameId(renameId);
-    setInlineRenameValue(collectionData?.info?.name || collection.name);
+    setInlineRenameValue(collectionData?.info?.name ?? collection.name);
   };
 
-  const clearInlineRename = () => {
+  const clearInlineRename = (): void => {
     setActiveRenameId(null);
     setInlineRenameValue('');
   };
@@ -474,24 +503,30 @@ function CollectionItem({
   const { handleSubmit: handleInlineRenameSubmit, handleCancel: handleInlineRenameCancel } = useInlineRename({
     isActive: activeRenameId === renameId,
     currentValue: inlineRenameValue,
-    originalValue: collectionData?.info?.name || collection.name,
+    originalValue: collectionData?.info?.name ?? collection.name,
     inputRef,
     focusTimeRef,
     onComplete: clearInlineRename,
     onSubmitValue: async (nextName) => {
-      if (!workspace) {
+      if (workspace === null) {
         return;
       }
 
       try {
         await window.quest.workspace.renameCollection(workspace.id, collection.id, nextName);
-        setCollectionData((previous: any) => previous ? {
-          ...previous,
-          info: {
-            ...previous.info,
-            name: nextName,
-          },
-        } : previous);
+        setCollectionData((previous) => {
+          if (previous === null) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            info: {
+              ...previous.info,
+              name: nextName,
+            },
+          };
+        });
 
         tabs
           .filter((tab) => tab.collectionId === collection.id && (tab.type === 'collection' || tab.type === 'runner'))
@@ -505,8 +540,8 @@ function CollectionItem({
     },
   });
 
-  const handleDuplicateCollection = async (newName: string) => {
-    if (!workspace) return;
+  const handleDuplicateCollection = async (newName: string): Promise<void> => {
+    if (workspace === null) return;
     try {
       await window.quest.workspace.duplicateCollection(workspace.id, collection.id, newName.trim());
       await refreshWorkspace();
@@ -517,8 +552,8 @@ function CollectionItem({
     }
   };
 
-  const handleDeleteCollection = async () => {
-    if (!workspace) return;
+  const handleDeleteCollection = async (): Promise<void> => {
+    if (workspace === null) return;
     try {
       await window.quest.workspace.deleteCollection(workspace.id, collection.id);
       closeTabsForCollectionDeletion();
@@ -530,12 +565,12 @@ function CollectionItem({
     }
   };
 
-  const handleMenuAction = async (action: MenuAction, item: any) => {
+  const handleMenuAction = (action: MenuAction): void => {
     switch (action) {
       case 'run':
         // Open collection tab with Runner tab active
-        if (collectionData) {
-          openCollection(collection.id, collectionData.protocol, collectionData.info?.name || collection.name, false, 'runner');
+        if (collectionData !== null) {
+          openCollection(collection.id, collectionData.protocol, collectionData.info?.name ?? collection.name, false, 'runner');
         }
         break;
       case 'collection-variables':
@@ -548,17 +583,19 @@ function CollectionItem({
         setDuplicatingCollection(true);
         break;
       case 'export':
-        try {
-          if (workspace) {
-            const result = await window.quest.workspace.exportCollection(workspace.id, collection.id);
-            if (result) {
-              console.log('Exported to:', result);
+        void (async () => {
+          try {
+            if (workspace !== null) {
+              const result = await window.quest.workspace.exportCollection(workspace.id, collection.id);
+              if (result !== null && result !== '') {
+                console.log('Exported to:', result);
+              }
             }
+          } catch (error) {
+            console.error('Failed to export collection:', error);
+            alert('Failed to export collection');
           }
-        } catch (error) {
-          console.error('Failed to export collection:', error);
-          alert('Failed to export collection');
-        }
+        })();
         break;
       case 'delete':
         setDeletingCollection(true);
@@ -581,16 +618,16 @@ function CollectionItem({
         className="collection-item"
         style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', padding: '0px 8px', fontSize: '12px', borderRadius: '4px', cursor: 'pointer' }}
         onClick={(e) => {
-          if ((e.target as HTMLElement).closest('button')) return;
-          if (collectionData) {
-            openCollection(collection.id, collectionData.protocol, collectionData.info?.name || collection.name, true); // single-click = temporary
+          if ((e.target as HTMLElement).closest('button') !== null) return;
+          if (collectionData !== null) {
+            openCollection(collection.id, collectionData.protocol, collectionData.info?.name ?? collection.name, true); // single-click = temporary
           }
         }}
         onDoubleClick={(e) => {
           e.stopPropagation(); // Prevent onClick from firing
-          if ((e.target as HTMLElement).closest('button')) return;
-          if (collectionData) {
-            openCollection(collection.id, collectionData.protocol, collectionData.info?.name || collection.name, false); // double-click = permanent
+          if ((e.target as HTMLElement).closest('button') !== null) return;
+          if (collectionData !== null) {
+            openCollection(collection.id, collectionData.protocol, collectionData.info?.name ?? collection.name, false); // double-click = permanent
           }
         }}
         onContextMenu={(e) => {
@@ -627,7 +664,7 @@ function CollectionItem({
             onClick={() => setIsExpanded(!isExpanded)}
             title={isUnsupported ? `Unsupported protocol: ${collectionData?.protocol}` : undefined}
           >
-            {collectionData?.info?.name || collection.name}
+            {collectionData?.info?.name ?? collection.name}
           </span>
         )}
         
@@ -672,32 +709,32 @@ function CollectionItem({
               <EllipsisVerticalIcon className="w-4 h-4" />
             </button>
           }
-          onAction={handleMenuAction}
+          onAction={(action) => { void handleMenuAction(action); }}
         />
       </div>
 
       {/* Right-click menu */}
-      {rightClickPosition && (
+      {rightClickPosition !== null && (
         <UnifiedContextMenu
           type="collection"
           item={collection}
           open={rightClickMenuOpen}
           onOpenChange={setRightClickMenuOpen}
           position={rightClickPosition}
-          onAction={handleMenuAction}
+          onAction={(action) => { void handleMenuAction(action); }}
         />
       )}
-      
-      {isExpanded && collectionData?.items && (
+
+      {isExpanded && collectionData !== null && (
         <div style={{ marginLeft: '16px', marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          {collectionData.items.map((item: any, index: number) => (
+          {collectionData.items.map((item, index) => (
               <CollectionRequestItem 
                 key={item.id} 
                 item={item} 
                 collectionId={collection.id}
                 parentId={null}
                 itemIndex={index}
-                protocol={collectionData?.protocol}
+                protocol={collectionData.protocol}
                 activeRenameId={activeRenameId}
                 setActiveRenameId={setActiveRenameId}
                 inlineRenameValue={inlineRenameValue}
@@ -715,33 +752,25 @@ function CollectionItem({
         onOpenChange={setShowAddRequest}
         title="Add Request"
         placeholder="Request name"
-        onSubmit={async (name) => {
-          try {
-            if (!workspace) return;
-            const requestId = await window.quest.workspace.addRequest(workspace.id, collection.id, name, null);
-            await refreshWorkspace();
-            setIsExpanded(true);
-            const data = await getCollection(collection.id);
-            const findRequest = (items: any[]): any => {
-              for (const item of items) {
-                if (item.id === requestId) return item;
-                if (item.items) {
-                  const found = findRequest(item.items);
-                  if (found) return found;
-                }
+        onSubmit={(name) => {
+          void (async () => {
+            try {
+              if (workspace === null) return;
+              const requestId = await window.quest.workspace.addRequest(workspace.id, collection.id, name, null);
+              await refreshWorkspace();
+              setIsExpanded(true);
+              const data = await getCollection(collection.id);
+              const newRequest = findRequestInItems(data.items, requestId);
+              if (newRequest !== null) {
+                const plugin = pluginLoader.getProtocolPluginUI(data.protocol);
+                const badge = plugin !== undefined ? plugin.getRequestBadge(newRequest) : undefined;
+                openRequest(collection.id, data.protocol, newRequest.id, newRequest.name, { badge });
               }
-              return null;
-            };
-            const newRequest = findRequest(data.items);
-            if (newRequest) {
-              const plugin = pluginLoader.getProtocolPluginUI(data.protocol);
-              const badge = plugin ? plugin.getRequestBadge(newRequest) : undefined;
-              openRequest(collection.id, data.protocol, newRequest.id, newRequest.name, { badge });
+            } catch (error) {
+              console.error('Failed to add request:', error);
+              alert('Failed to add request');
             }
-          } catch (error) {
-            console.error('Failed to add request:', error);
-            alert('Failed to add request');
-          }
+          })();
         }}
       />
 
@@ -751,19 +780,21 @@ function CollectionItem({
         onOpenChange={setShowAddFolder}
         title="Add Folder"
         placeholder="Folder name"
-        onSubmit={async (name) => {
-          try {
-            if (!workspace) return;
-            console.log('[CollectionItem] Adding folder:', { name, collectionId: collection.id });
-            await window.quest.workspace.addFolder(workspace.id, collection.id, name, null);
-            console.log('[CollectionItem] Folder added, refreshing workspace...');
-            await refreshWorkspace();
-            setIsExpanded(true);
-            console.log('[CollectionItem] Workspace refreshed');
-          } catch (error) {
-            console.error('Failed to add folder:', error);
-            alert('Failed to add folder');
-          }
+        onSubmit={(name) => {
+          void (async () => {
+            try {
+              if (workspace === null) return;
+              console.log('[CollectionItem] Adding folder:', { name, collectionId: collection.id });
+              await window.quest.workspace.addFolder(workspace.id, collection.id, name, null);
+              console.log('[CollectionItem] Folder added, refreshing workspace...');
+              await refreshWorkspace();
+              setIsExpanded(true);
+              console.log('[CollectionItem] Workspace refreshed');
+            } catch (error) {
+              console.error('Failed to add folder:', error);
+              alert('Failed to add folder');
+            }
+          })();
         }}
       />
 
@@ -771,9 +802,9 @@ function CollectionItem({
       <VariableEditorDialog
         open={showCollectionVars}
         onOpenChange={setShowCollectionVars}
-        title={`${collectionData?.info?.name || 'Collection'} Variables`}
+        title={`${collectionData?.info?.name ?? 'Collection'} Variables`}
         variables={collectionVariables}
-        onSave={handleSaveCollectionVars}
+        onSave={(updatedVariables) => { void handleSaveCollectionVars(updatedVariables); }}
         showEnabled={false}
       />
 
@@ -783,8 +814,8 @@ function CollectionItem({
         onOpenChange={setDuplicatingCollection}
         title="Duplicate Collection"
         placeholder="New collection name"
-        defaultValue={collectionData?.info?.name ? `${collectionData.info.name} Copy` : `${collection.name} Copy`}
-        onSubmit={handleDuplicateCollection}
+        defaultValue={collectionData?.info?.name !== undefined && collectionData.info.name !== '' ? `${collectionData.info.name} Copy` : `${collection.name} Copy`}
+        onSubmit={(newName) => { void handleDuplicateCollection(newName); }}
       />
 
       {/* Delete Collection Dialog */}
@@ -792,30 +823,18 @@ function CollectionItem({
         open={deletingCollection}
         onOpenChange={setDeletingCollection}
         title="Delete Collection"
-        description={`Are you sure you want to delete "${collectionData?.info?.name || collection.name}"? This action cannot be undone.`}
+        description={`Are you sure you want to delete "${collectionData?.info?.name ?? collection.name}"? This action cannot be undone.`}
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={handleDeleteCollection}
+        onConfirm={() => { void handleDeleteCollection(); }}
       />
     </div>
   );
 }
 
-function CollectionRequestItem({ 
-  item, 
-  collectionId,
-  parentId,
-  itemIndex,
-  protocol,
-  activeRenameId,
-  setActiveRenameId,
-  inlineRenameValue,
-  setInlineRenameValue,
-  activeDragItem,
-  dropPreview,
-}: { 
-  item: any; 
+type CollectionTreeItemProps = {
+  item: CollectionItem;
   collectionId: string;
   parentId: string | null;
   itemIndex: number;
@@ -826,334 +845,255 @@ function CollectionRequestItem({
   setInlineRenameValue: (value: string) => void;
   activeDragItem: TreeDragItem | null;
   dropPreview: TreeDropPreview;
-}) {
+};
+
+function CollectionRequestItem(props: CollectionTreeItemProps): ReactElement {
+  return isFolderItem(props.item)
+    ? <CollectionFolderItem {...props} item={props.item} />
+    : <CollectionLeafRequestItem {...props} item={props.item} />;
+}
+
+function CollectionFolderItem({
+  item,
+  collectionId,
+  parentId,
+  itemIndex,
+  protocol,
+  activeRenameId,
+  setActiveRenameId,
+  inlineRenameValue,
+  setInlineRenameValue,
+  activeDragItem,
+  dropPreview,
+}: Omit<CollectionTreeItemProps, 'item'> & { item: Folder }): ReactElement {
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const requestInputRef = useRef<HTMLInputElement>(null);
+  const folderFocusTimeRef = useRef<number>(0);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showAddRequest, setShowAddRequest] = useState(false);
+  const [showAddFolder, setShowAddFolder] = useState(false);
+  const [rightClickMenuOpen, setRightClickMenuOpen] = useState(false);
+  const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState(false);
   const { tabs, closeTab, openRequest, openFolder } = useTabNavigation();
   const { setName } = useTabStatusActions();
-
   const { workspace, refreshWorkspace } = useWorkspace();
+  const renameId = `folder:${item.id}`;
+  const dragItem = buildDragItem({ item, sourceCollectionId: collectionId, sourceParentId: parentId, sourceIndex: itemIndex });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `drag-folder:${item.id}`,
+    data: { dragItem },
+  });
+  const draggableStyle = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.45 : 1,
+  };
+  const folderDropTargets = [
+    createDropTarget({ targetCollectionId: collectionId, targetParentId: parentId, targetIndex: itemIndex, position: 'before', overType: 'folder', overId: item.id }),
+    createDropTarget({ targetCollectionId: collectionId, targetParentId: item.id, targetIndex: item.items.length, position: 'inside', overType: 'folder', overId: item.id }),
+    createDropTarget({ targetCollectionId: collectionId, targetParentId: parentId, targetIndex: itemIndex + 1, position: 'after', overType: 'folder', overId: item.id }),
+  ];
 
-  if (item.items) {
-    // It's a folder
-    const folderFocusTimeRef = useRef<number>(0);
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [showAddRequest, setShowAddRequest] = useState(false);
-    const [showAddFolder, setShowAddFolder] = useState(false);
-    const [rightClickMenuOpen, setRightClickMenuOpen] = useState(false);
-    const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
-    const [deletingFolder, setDeletingFolder] = useState(false);
-    const renameId = `folder:${item.id}`;
-    const dragItem = buildDragItem({
-      item,
-      sourceCollectionId: collectionId,
-      sourceParentId: parentId,
-      sourceIndex: itemIndex,
-    });
-    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-      id: `drag-folder:${item.id}`,
-      data: { dragItem },
-    });
-    const draggableStyle = {
-      transform: CSS.Translate.toString(transform),
-      opacity: isDragging ? 0.45 : 1,
-    };
-    const folderDropTargets = [
-      createDropTarget({
-        targetCollectionId: collectionId,
-        targetParentId: parentId,
-        targetIndex: itemIndex,
-        position: 'before',
-        overType: 'folder',
-        overId: item.id,
-      }),
-      createDropTarget({
-        targetCollectionId: collectionId,
-        targetParentId: item.id,
-        targetIndex: item.items.length,
-        position: 'inside',
-        overType: 'folder',
-        overId: item.id,
-      }),
-      createDropTarget({
-        targetCollectionId: collectionId,
-        targetParentId: parentId,
-        targetIndex: itemIndex + 1,
-        position: 'after',
-        overType: 'folder',
-        overId: item.id,
-      }),
-    ];
+  const closeTabsForFolderDeletion = (): void => {
+    const folderIds = new Set<string>([item.id]);
+    const requestIds = new Set<string>();
+    const stack: CollectionItem[] = [...item.items];
 
-    const closeTabsForFolderDeletion = () => {
-      const folderIds = new Set<string>([item.id]);
-      const requestIds = new Set<string>();
-
-      const stack = [...(item.items || [])];
-      while (stack.length > 0) {
-        const node = stack.pop();
-        if (!node) {
-          continue;
-        }
-
-        if (node.items) {
-          folderIds.add(node.id);
-          stack.push(...node.items);
-        } else {
-          requestIds.add(node.id);
-        }
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (node === undefined) {
+        continue;
       }
 
-      const tabIdsToClose = tabs
-        .filter(tab =>
-          tab.collectionId === collectionId && (
-            (tab.type === 'folder' && folderIds.has(tab.resourceId)) ||
-            (tab.type === 'request' && requestIds.has(tab.resourceId))
-          )
-        )
-        .map(tab => tab.id);
+      if (isFolderItem(node)) {
+        folderIds.add(node.id);
+        stack.push(...node.items);
+        continue;
+      }
 
-      tabIdsToClose.forEach(closeTab);
-    };
-    
-    const handleStartInlineRename = () => {
-      setActiveRenameId(renameId);
-      setInlineRenameValue(item.name);
-    };
+      requestIds.add(node.id);
+    }
 
-    const clearInlineRename = () => {
-      setActiveRenameId(null);
-      setInlineRenameValue('');
-    };
+    tabs
+      .filter((tab) => tab.collectionId === collectionId && ((tab.type === 'folder' && folderIds.has(tab.resourceId)) || (tab.type === 'request' && requestIds.has(tab.resourceId))))
+      .map((tab) => tab.id)
+      .forEach(closeTab);
+  };
 
-    const { handleSubmit: handleInlineRenameSubmit, handleCancel: handleInlineRenameCancel } = useInlineRename({
-      isActive: activeRenameId === renameId,
-      currentValue: inlineRenameValue,
-      originalValue: item.name,
-      inputRef: folderInputRef,
-      focusTimeRef: folderFocusTimeRef,
-      onComplete: clearInlineRename,
-      onSubmitValue: async (nextName) => {
-        if (!workspace) {
-          return;
-        }
+  const handleStartInlineRename = (): void => {
+    setActiveRenameId(renameId);
+    setInlineRenameValue(item.name);
+  };
 
-        try {
-          await window.quest.workspace.renameFolder(workspace.id, collectionId, item.id, nextName);
-          tabs
-            .filter((tab) => tab.type === 'folder' && tab.collectionId === collectionId && tab.resourceId === item.id)
-            .forEach((tab) => setName(tab.id, nextName));
-          await refreshWorkspace();
-        } catch (error) {
-          console.error('Failed to rename folder:', error);
-          alert('Failed to rename folder');
-        }
-      },
-    });
-    
-    const handleDeleteFolder = async () => {
-      if (!workspace) return;
+  const clearInlineRename = (): void => {
+    setActiveRenameId(null);
+    setInlineRenameValue('');
+  };
+
+  const { handleSubmit: handleInlineRenameSubmit, handleCancel: handleInlineRenameCancel } = useInlineRename({
+    isActive: activeRenameId === renameId,
+    currentValue: inlineRenameValue,
+    originalValue: item.name,
+    inputRef: folderInputRef,
+    focusTimeRef: folderFocusTimeRef,
+    onComplete: clearInlineRename,
+    onSubmitValue: async (nextName) => {
+      if (workspace === null) {
+        return;
+      }
+
       try {
-        console.log('[Folder] Deleting folder:', item.id);
-        await window.quest.workspace.deleteFolder(workspace.id, collectionId, item.id);
-        closeTabsForFolderDeletion();
-        console.log('[Folder] Folder deleted, refreshing workspace...');
+        await window.quest.workspace.renameFolder(workspace.id, collectionId, item.id, nextName);
+        tabs.filter((tab) => tab.type === 'folder' && tab.collectionId === collectionId && tab.resourceId === item.id).forEach((tab) => setName(tab.id, nextName));
         await refreshWorkspace();
-        console.log('[Folder] Workspace refreshed');
-        setDeletingFolder(false);
       } catch (error) {
-        console.error('Failed to delete folder:', error);
-        alert('Failed to delete folder');
+        console.error('Failed to rename folder:', error);
+        alert('Failed to rename folder');
       }
-    };
+    },
+  });
 
-    const handleMenuAction = async (action: MenuAction, item: any) => {
-      switch (action) {
-        case 'rename':
-          handleStartInlineRename();
-          break;
-        case 'delete':
-          setDeletingFolder(true);
-          break;
-      }
-    };
-    
-    return (
-      <div>
-        <div
-          ref={setNodeRef}
-          className="collection-row"
-          style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', padding: '0px 8px', fontSize: '12px', borderRadius: '4px', cursor: 'grab', ...draggableStyle }}
-          {...attributes}
-          {...listeners}
-          onClick={(e) => {
-            // Don't open folder when clicking on buttons
-            if ((e.target as HTMLElement).closest('button')) return;
-            openFolder(collectionId, protocol, item.id, item.name, true); // single-click = temporary
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation(); // Prevent onClick from firing
-            // Don't open folder when clicking on buttons
-            if ((e.target as HTMLElement).closest('button')) return;
-            openFolder(collectionId, protocol, item.id, item.name, false); // double-click = permanent
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setRightClickPosition({ x: e.clientX, y: e.clientY });
-            setRightClickMenuOpen(true);
-          }}
-        >
+  const handleDeleteFolder = async (): Promise<void> => {
+    if (workspace === null) return;
+    try {
+      console.log('[Folder] Deleting folder:', item.id);
+      await window.quest.workspace.deleteFolder(workspace.id, collectionId, item.id);
+      closeTabsForFolderDeletion();
+      console.log('[Folder] Folder deleted, refreshing workspace...');
+      await refreshWorkspace();
+      console.log('[Folder] Workspace refreshed');
+      setDeletingFolder(false);
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+      alert('Failed to delete folder');
+    }
+  };
+
+  const handleMenuAction = (action: MenuAction): void => {
+    switch (action) {
+      case 'rename':
+        handleStartInlineRename();
+        break;
+      case 'delete':
+        setDeletingFolder(true);
+        break;
+    }
+  };
+
+  return (
+    <div>
+      <div
+        ref={setNodeRef}
+        className="collection-row"
+        style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', padding: '0px 8px', fontSize: '12px', borderRadius: '4px', cursor: 'grab', ...draggableStyle }}
+        {...attributes}
+        {...listeners}
+        onClick={(e) => {
+          if ((e.target as HTMLElement | null)?.closest('button') !== null) return;
+          openFolder(collectionId, protocol, item.id, item.name, true);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if ((e.target as HTMLElement | null)?.closest('button') !== null) return;
+          openFolder(collectionId, protocol, item.id, item.name, false);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setRightClickPosition({ x: e.clientX, y: e.clientY });
+          setRightClickMenuOpen(true);
+        }}
+      >
         <DropTargetZones activeDragItem={activeDragItem} dropPreview={dropPreview} zones={folderDropTargets} />
         <button
           style={{ color: 'var(--gray-9)', cursor: 'pointer', padding: 0, background: 'transparent', border: 'none' }}
-          onClick={() => setIsExpanded(!isExpanded)}
+          onClick={() => setIsExpanded((value) => !value)}
         >
-          {isExpanded ? (
-            <ChevronDownIcon style={{ width: '12px', height: '12px', color: 'var(--gray-9)' }} />
-          ) : (
-            <ChevronRightIcon style={{ width: '12px', height: '12px', color: 'var(--gray-9)' }} />
-          )}
+          {isExpanded ? <ChevronDownIcon style={{ width: '12px', height: '12px', color: 'var(--gray-9)' }} /> : <ChevronRightIcon style={{ width: '12px', height: '12px', color: 'var(--gray-9)' }} />}
         </button>
-        <FolderIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />          
-        
+        <FolderIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />
         {activeRenameId === renameId ? (
-          <InlineRenameField
-            inputRef={folderInputRef}
-            value={inlineRenameValue}
-            onChange={setInlineRenameValue}
-            onSubmit={handleInlineRenameSubmit}
-            onCancel={handleInlineRenameCancel}
-          />
+          <InlineRenameField inputRef={folderInputRef} value={inlineRenameValue} onChange={setInlineRenameValue} onSubmit={handleInlineRenameSubmit} onCancel={handleInlineRenameCancel} />
         ) : (
-          <span 
-            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
-            onClick={() => setIsExpanded(!isExpanded)}
-          >
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={() => setIsExpanded((value) => !value)}>
             {item.name}
           </span>
         )}
-        
-        {/* Folder metadata icons (dependencies/conditions) */}
         <RequestMetadataIcons resource={item} />
-          
-          {/* Add request button */}
-          <button 
-            className="hover-visible"
-            style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowAddRequest(true);
-            }}
-            title="Add Request"
-          >
-             <PlusIcon className="w-4 h-4" />
-          </button>
-          
-          {/* Add folder button */}
-          <button 
-            className="hover-visible"
-            style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer' }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowAddFolder(true);
-            }}
-            title="Add Folder"
-          >
-            <FolderPlusIcon className="w-4 h-4" />
-          </button>
-          
-          {/* Three-dots menu */}
-          <UnifiedContextMenu
-            type="folder"
-            item={item}
-            trigger={
-              <button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-10)' }}>
-                <EllipsisVerticalIcon className="w-4 h-4" />
-              </button>
-            }
-            onAction={handleMenuAction}
-          />
+        <button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setShowAddRequest(true); }} title="Add Request">
+          <PlusIcon className="w-4 h-4" />
+        </button>
+        <button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setShowAddFolder(true); }} title="Add Folder">
+          <FolderPlusIcon className="w-4 h-4" />
+        </button>
+        <UnifiedContextMenu
+          type="folder"
+          item={item}
+          trigger={<button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-10)' }}><EllipsisVerticalIcon className="w-4 h-4" /></button>}
+          onAction={(action) => { handleMenuAction(action); }}
+        />
+      </div>
+
+      {rightClickPosition !== null && (
+        <UnifiedContextMenu type="folder" item={item} open={rightClickMenuOpen} onOpenChange={setRightClickMenuOpen} position={rightClickPosition} onAction={(action) => { handleMenuAction(action); }} />
+      )}
+
+      {isExpanded && (
+        <div style={{ marginLeft: '16px', marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          {item.items.map((subItem, index) => (
+            <CollectionRequestItem
+              key={subItem.id}
+              item={subItem}
+              collectionId={collectionId}
+              parentId={item.id}
+              itemIndex={index}
+              protocol={protocol}
+              activeRenameId={activeRenameId}
+              setActiveRenameId={setActiveRenameId}
+              inlineRenameValue={inlineRenameValue}
+              setInlineRenameValue={setInlineRenameValue}
+              activeDragItem={activeDragItem}
+              dropPreview={dropPreview}
+            />
+          ))}
         </div>
+      )}
 
-        {/* Right-click menu */}
-        {rightClickPosition && (
-          <UnifiedContextMenu
-            type="folder"
-            item={item}
-            open={rightClickMenuOpen}
-            onOpenChange={setRightClickMenuOpen}
-            position={rightClickPosition}
-            onAction={handleMenuAction}
-          />
-        )}
-        
-        {isExpanded && item.items && (
-          <div style={{ marginLeft: '16px', marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {item.items.map((subItem: any, index: number) => (
-                <CollectionRequestItem 
-                  key={subItem.id} 
-                  item={subItem} 
-                  collectionId={collectionId}
-                  parentId={item.id}
-                  itemIndex={index}
-                  protocol={protocol}
-                  activeRenameId={activeRenameId}
-                  setActiveRenameId={setActiveRenameId}
-                  inlineRenameValue={inlineRenameValue}
-                  setInlineRenameValue={setInlineRenameValue}
-                  activeDragItem={activeDragItem}
-                  dropPreview={dropPreview}
-                />
-              ))}
-          </div>
-        )}
-
-        {/* Add Request Dialog */}
-        <InputDialog
-          open={showAddRequest}
-          onOpenChange={setShowAddRequest}
-          title="Add Request"
-          placeholder="Request name"
-          onSubmit={async (name) => {
+      <InputDialog
+        open={showAddRequest}
+        onOpenChange={setShowAddRequest}
+        title="Add Request"
+        placeholder="Request name"
+        onSubmit={(name) => {
+          void (async () => {
             try {
-              if (!workspace) return;
+              if (workspace === null) return;
               const requestId = await window.quest.workspace.addRequest(workspace.id, collectionId, name, item.id);
               await refreshWorkspace();
               setIsExpanded(true);
               const collection = await window.quest.workspace.loadCollection(workspace.id, collectionId);
-              const findRequest = (items: any[]): any => {
-                for (const it of items) {
-                  if (it.id === requestId) return it;
-                  if (it.items) {
-                    const found = findRequest(it.items);
-                    if (found) return found;
-                  }
-                }
-                return null;
-              };
-              const newRequest = findRequest(collection.items);
-              if (newRequest) {
+              const newRequest = findRequestInItems(collection.items, requestId);
+              if (newRequest !== null) {
                 const plugin = pluginLoader.getProtocolPluginUI(collection.protocol);
-                const badge = plugin ? plugin.getRequestBadge(newRequest) : undefined;
+                const badge = plugin !== undefined ? plugin.getRequestBadge(newRequest) : undefined;
                 openRequest(collectionId, collection.protocol, newRequest.id, newRequest.name, { badge });
               }
             } catch (error) {
               console.error('Failed to add request:', error);
               alert('Failed to add request');
             }
-          }}
-        />
+          })();
+        }}
+      />
 
-        {/* Add Folder Dialog */}
-        <InputDialog
-          open={showAddFolder}
-          onOpenChange={setShowAddFolder}
-          title="Add Folder"
-          placeholder="Folder name"
-          onSubmit={async (name) => {
+      <InputDialog
+        open={showAddFolder}
+        onOpenChange={setShowAddFolder}
+        title="Add Folder"
+        placeholder="Folder name"
+        onSubmit={(name) => {
+          void (async () => {
             try {
-              if (!workspace) return;
+              if (workspace === null) return;
               await window.quest.workspace.addFolder(workspace.id, collectionId, name, item.id);
               await refreshWorkspace();
               setIsExpanded(true);
@@ -1161,36 +1101,47 @@ function CollectionRequestItem({
               console.error('Failed to add folder:', error);
               alert('Failed to add folder');
             }
-          }}
-        />
+          })();
+        }}
+      />
 
-        {/* Delete Folder Dialog */}
-        <ConfirmDialog
-          open={deletingFolder}
-          onOpenChange={setDeletingFolder}
-          title="Delete Folder"
-          description={`Are you sure you want to delete "${item.name}"? This will also delete all requests and subfolders inside it. This action cannot be undone.`}
-          confirmLabel="Delete"
-          cancelLabel="Cancel"
-          variant="danger"
-          onConfirm={handleDeleteFolder}
-        />
-      </div>
-    );
-  }
+      <ConfirmDialog
+        open={deletingFolder}
+        onOpenChange={setDeletingFolder}
+        title="Delete Folder"
+        description={`Are you sure you want to delete "${item.name}"? This will also delete all requests and subfolders inside it. This action cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => { void handleDeleteFolder(); }}
+      />
+    </div>
+  );
+}
 
-  // It's a request
+function CollectionLeafRequestItem({
+  item,
+  collectionId,
+  parentId,
+  itemIndex,
+  protocol,
+  activeRenameId,
+  setActiveRenameId,
+  inlineRenameValue,
+  setInlineRenameValue,
+  activeDragItem,
+  dropPreview,
+}: Omit<CollectionTreeItemProps, 'item'> & { item: Request }): ReactElement {
+  const requestInputRef = useRef<HTMLInputElement>(null);
   const requestFocusTimeRef = useRef<number>(0);
   const [rightClickMenuOpen, setRightClickMenuOpen] = useState(false);
   const [rightClickPosition, setRightClickPosition] = useState<{ x: number; y: number } | null>(null);
   const [deletingRequest, setDeletingRequest] = useState(false);
+  const { tabs, closeTab, openRequest } = useTabNavigation();
+  const { setName } = useTabStatusActions();
+  const { workspace, refreshWorkspace } = useWorkspace();
   const renameId = `request:${item.id}`;
-  const dragItem = buildDragItem({
-    item,
-    sourceCollectionId: collectionId,
-    sourceParentId: parentId,
-    sourceIndex: itemIndex,
-  });
+  const dragItem = buildDragItem({ item, sourceCollectionId: collectionId, sourceParentId: parentId, sourceIndex: itemIndex });
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `drag-request:${item.id}`,
     data: { dragItem },
@@ -1200,58 +1151,31 @@ function CollectionRequestItem({
     opacity: isDragging ? 0.45 : 1,
   };
   const requestDropTargets = [
-    createDropTarget({
-      targetCollectionId: collectionId,
-      targetParentId: parentId,
-      targetIndex: itemIndex,
-      position: 'before',
-      overType: 'request',
-      overId: item.id,
-    }),
-    createDropTarget({
-      targetCollectionId: collectionId,
-      targetParentId: parentId,
-      targetIndex: itemIndex + 1,
-      position: 'after',
-      overType: 'request',
-      overId: item.id,
-    }),
+    createDropTarget({ targetCollectionId: collectionId, targetParentId: parentId, targetIndex: itemIndex, position: 'before', overType: 'request', overId: item.id }),
+    createDropTarget({ targetCollectionId: collectionId, targetParentId: parentId, targetIndex: itemIndex + 1, position: 'after', overType: 'request', overId: item.id }),
   ];
 
-  const closeTabsForRequestDeletion = () => {
-    const tabIdsToClose = tabs
-      .filter(tab => tab.type === 'request' && tab.collectionId === collectionId && tab.resourceId === item.id)
-      .map(tab => tab.id);
-
-    tabIdsToClose.forEach(closeTab);
+  const closeTabsForRequestDeletion = (): void => {
+    tabs.filter((tab) => tab.type === 'request' && tab.collectionId === collectionId && tab.resourceId === item.id).map((tab) => tab.id).forEach(closeTab);
   };
-  
-  // Get badge from plugin
+
   const plugin = pluginLoader.getProtocolPluginUI(protocol);
-  const badge = plugin ? plugin.getRequestBadge(item) : null;
+  const badge = plugin !== undefined ? plugin.getRequestBadge(item) : undefined;
 
-  const handleClick = () => {
-    // Single click - open as temporary tab
-    if (item.type === 'request' || (!item.items && item.data)) {
-      const requestBadge = badge || undefined;
-      openRequest(collectionId, protocol, item.id, item.name, { badge: requestBadge, description: item.description }, true); // true = isTemporary
-    }
+  const handleClick = (): void => {
+    openRequest(collectionId, protocol, item.id, item.name, { badge, description: item.description }, true);
   };
 
-  const handleDoubleClick = () => {
-    // Double click - open as permanent tab
-    if (item.type === 'request' || (!item.items && item.data)) {
-      const requestBadge = badge || undefined;
-      openRequest(collectionId, protocol, item.id, item.name, { badge: requestBadge, description: item.description }, false); // false = not temporary
-    }
+  const handleDoubleClick = (): void => {
+    openRequest(collectionId, protocol, item.id, item.name, { badge, description: item.description }, false);
   };
 
-  const handleStartInlineRename = () => {
+  const handleStartInlineRename = (): void => {
     setActiveRenameId(renameId);
     setInlineRenameValue(item.name);
   };
 
-  const clearInlineRename = () => {
+  const clearInlineRename = (): void => {
     setActiveRenameId(null);
     setInlineRenameValue('');
   };
@@ -1264,15 +1188,13 @@ function CollectionRequestItem({
     focusTimeRef: requestFocusTimeRef,
     onComplete: clearInlineRename,
     onSubmitValue: async (nextName) => {
-      if (!workspace) {
+      if (workspace === null) {
         return;
       }
 
       try {
         await window.quest.workspace.renameRequest(workspace.id, collectionId, item.id, nextName);
-        tabs
-          .filter((tab) => tab.type === 'request' && tab.collectionId === collectionId && tab.resourceId === item.id)
-          .forEach((tab) => setName(tab.id, nextName));
+        tabs.filter((tab) => tab.type === 'request' && tab.collectionId === collectionId && tab.resourceId === item.id).forEach((tab) => setName(tab.id, nextName));
         await refreshWorkspace();
       } catch (error) {
         console.error('Failed to rename request:', error);
@@ -1281,8 +1203,8 @@ function CollectionRequestItem({
     },
   });
 
-  const handleDeleteRequest = async () => {
-    if (!workspace) return;
+  const handleDeleteRequest = async (): Promise<void> => {
+    if (workspace === null) return;
     try {
       console.log('[Request] Deleting request:', item.id);
       await window.quest.workspace.deleteRequest(workspace.id, collectionId, item.id);
@@ -1297,15 +1219,14 @@ function CollectionRequestItem({
     }
   };
 
-  const handleMenuAction = async (action: MenuAction, item: any) => {
+  const handleMenuAction = (action: MenuAction): void => {
     switch (action) {
       case 'rename':
         handleStartInlineRename();
         break;
-        case 'duplicate':
-          // TODO: Implement duplicate
-          console.log('Duplicate request:', item.name);
-          break;
+      case 'duplicate':
+        console.log('Duplicate request:', item.name);
+        break;
       case 'delete':
         setDeletingRequest(true);
         break;
@@ -1330,63 +1251,25 @@ function CollectionRequestItem({
         }}
       >
         <DropTargetZones activeDragItem={activeDragItem} dropPreview={dropPreview} zones={requestDropTargets} />
-        {badge ? (
-          <Badge color={badge.color as any} size="1" style={{ fontSize: '10px', fontWeight: 700 }}>
-            {badge.primary}
-          </Badge>
-        ) : (
-          <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>
-            REQ
-          </Badge>
-        )}
-        
+        {badge !== undefined ? <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>{badge.primary}</Badge> : <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>REQ</Badge>}
         {activeRenameId === renameId ? (
-          <InlineRenameField
-            inputRef={requestInputRef}
-            value={inlineRenameValue}
-            onChange={setInlineRenameValue}
-            onSubmit={handleInlineRenameSubmit}
-            onCancel={handleInlineRenameCancel}
-          />
+          <InlineRenameField inputRef={requestInputRef} value={inlineRenameValue} onChange={setInlineRenameValue} onSubmit={handleInlineRenameSubmit} onCancel={handleInlineRenameCancel} />
         ) : (
-          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {item.name}
-          </span>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
         )}
-        
-        {/* Request metadata icons (dependencies/conditions) */}
         <RequestMetadataIcons resource={item} />
-        
-        {/* Three-dots menu */}
         <UnifiedContextMenu
           type="request"
           item={item}
-          trigger={
-            <button 
-              className="hover-visible"
-              style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-10)' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <EllipsisVerticalIcon className="w-4 h-4" />
-            </button>
-          }
-          onAction={handleMenuAction}
+          trigger={<button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-10)' }} onClick={(e) => e.stopPropagation()}><EllipsisVerticalIcon className="w-4 h-4" /></button>}
+          onAction={(action) => { handleMenuAction(action); }}
         />
       </div>
 
-      {/* Right-click menu */}
-      {rightClickPosition && (
-        <UnifiedContextMenu
-          type="request"
-          item={item}
-          open={rightClickMenuOpen}
-          onOpenChange={setRightClickMenuOpen}
-          position={rightClickPosition}
-          onAction={handleMenuAction}
-        />
+      {rightClickPosition !== null && (
+        <UnifiedContextMenu type="request" item={item} open={rightClickMenuOpen} onOpenChange={setRightClickMenuOpen} position={rightClickPosition} onAction={(action) => { handleMenuAction(action); }} />
       )}
 
-      {/* Delete Request Dialog */}
       <ConfirmDialog
         open={deletingRequest}
         onOpenChange={setDeletingRequest}
@@ -1395,7 +1278,7 @@ function CollectionRequestItem({
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={handleDeleteRequest}
+        onConfirm={() => { void handleDeleteRequest(); }}
       />
     </div>
   );
@@ -1409,7 +1292,7 @@ function DropTargetZones({
   activeDragItem: TreeDragItem | null;
   dropPreview: TreeDropPreview;
   zones: TreeDropTarget[];
-}) {
+}): ReactElement | null {
   if (activeDragItem === null) {
     return null;
   }
@@ -1423,7 +1306,7 @@ function DropTargetZones({
   );
 }
 
-function DropTargetZone({ zone, dropPreview }: { zone: TreeDropTarget; dropPreview: TreeDropPreview }) {
+function DropTargetZone({ zone, dropPreview }: { zone: TreeDropTarget; dropPreview: TreeDropPreview }): ReactElement {
   const { setNodeRef } = useDroppable({
     id: zone.zoneId,
     data: { dropTarget: zone },
@@ -1446,7 +1329,7 @@ function DropTargetZone({ zone, dropPreview }: { zone: TreeDropTarget; dropPrevi
 function NewCollectionDialog({ open, onOpenChange }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}) {
+}): ReactElement {
   const protocols = pluginManagerService.getAllProtocolPlugins();
   const hasProtocols = protocols.length > 0;
   const [name, setName] = useState('');
@@ -1454,13 +1337,15 @@ function NewCollectionDialog({ open, onOpenChange }: {
   const { workspace, refreshWorkspace } = useWorkspace();
   const { setMode } = useScreenMode();
 
-  const handleCreate = async (protocol: string) => {
-    if (!workspace || !name.trim()) return;
+  const trimmedName = name.trim();
+
+  const handleCreate = async (protocol: string): Promise<void> => {
+    if (workspace === null || trimmedName === '') return;
 
     setIsCreating(true);
     try {
       // Use IPC to create collection
-      await window.quest.workspace.createCollection(workspace.id, name.trim(), protocol);
+      await window.quest.workspace.createCollection(workspace.id, trimmedName, protocol);
 
       // Refresh workspace to show new collection
       await refreshWorkspace();
@@ -1476,7 +1361,7 @@ function NewCollectionDialog({ open, onOpenChange }: {
     }
   };
 
-  const handleGoToPlugins = () => {
+  const handleGoToPlugins = (): void => {
     onOpenChange(false);
     setMode('settings', 'plugins');
   };
@@ -1543,9 +1428,9 @@ function NewCollectionDialog({ open, onOpenChange }: {
                   {protocols.map((plugin) => (
                     <button
                       key={plugin.protocol}
-                      onClick={() => handleCreate(plugin.protocol)}
-                      disabled={!name.trim() || isCreating}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', fontSize: '12px', background: 'transparent', borderRadius: '6px', border: '1px solid var(--gray-6)', cursor: !name.trim() || isCreating ? 'not-allowed' : 'pointer', opacity: !name.trim() || isCreating ? 0.5 : 1 }}
+                      onClick={() => { void handleCreate(plugin.protocol); }}
+                      disabled={trimmedName === '' || isCreating}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 12px', fontSize: '12px', background: 'transparent', borderRadius: '6px', border: '1px solid var(--gray-6)', cursor: trimmedName === '' || isCreating ? 'not-allowed' : 'pointer', opacity: trimmedName === '' || isCreating ? 0.5 : 1 }}
                     >
                       <span style={{ fontSize: '16px' }}>{plugin.icon}</span>
                       <div style={{ flex: 1, textAlign: 'left' }}>

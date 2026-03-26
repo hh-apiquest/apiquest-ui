@@ -1,12 +1,20 @@
 // TabBar - Shows open request tabs with close buttons
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ReactElement } from 'react';
 import { useTabNavigation, useTabStatusState, useTabEditorBridge, useWorkspace } from '../../contexts';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { Badge } from '@radix-ui/themes';
 import { RectangleStackIcon, FolderIcon, ChevronLeftIcon, ChevronRightIcon, DocumentArrowDownIcon, ArrowPathIcon, CheckCircleIcon, XCircleIcon, PlayIcon } from '@heroicons/react/24/outline';
-import type { RunnerMetadata, RequestMetadata } from '../../contexts/TabContext';
+import type { RunnerMetadata, RequestMetadata, Tab } from '../../contexts/TabContext';
 
-export function TabBar() {
+function isRequestMetadata(metadata: Tab['metadata']): metadata is RequestMetadata {
+  return metadata !== undefined && metadata !== null && !('runId' in metadata);
+}
+
+function isRunnerMetadata(metadata: Tab['metadata']): metadata is RunnerMetadata {
+  return metadata !== undefined && metadata !== null && 'runId' in metadata;
+}
+
+export function TabBar(): ReactElement {
   const { tabs, activeTabId, setActiveTab, closeTab, clearTemporaryFlag, clearResourceState } = useTabNavigation();
   const { workspace } = useWorkspace();
   const { status } = useTabStatusState();
@@ -22,8 +30,8 @@ export function TabBar() {
   const tabRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const previousTabsLengthRef = useRef(tabs.length);
 
-  const updateScrollButtons = () => {
-    if (!scrollContainerRef.current) return;
+  const updateScrollButtons = (): void => {
+    if (scrollContainerRef.current === null) return;
     
     const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
     setCanScrollLeft(scrollLeft > 0);
@@ -31,7 +39,7 @@ export function TabBar() {
   };
 
   useEffect(() => {
-    if (tabs.length > previousTabsLengthRef.current && scrollContainerRef.current) {
+    if (tabs.length > previousTabsLengthRef.current && scrollContainerRef.current !== null) {
       scrollContainerRef.current.scrollTo({
         left: scrollContainerRef.current.scrollWidth,
         behavior: 'smooth'
@@ -43,7 +51,7 @@ export function TabBar() {
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container) return;
+    if (container === null) return;
     
     updateScrollButtons();
     container.addEventListener('scroll', updateScrollButtons);
@@ -55,10 +63,10 @@ export function TabBar() {
 
   // Scroll active tab into view when it changes
   useEffect(() => {
-    if (!activeTabId || !scrollContainerRef.current) return;
+    if (activeTabId === null || scrollContainerRef.current === null) return;
     
     const activeTabElement = tabRefsRef.current.get(activeTabId);
-    if (!activeTabElement) return;
+    if (activeTabElement === undefined) return;
     
     activeTabElement.scrollIntoView({
       behavior: 'smooth',
@@ -67,23 +75,23 @@ export function TabBar() {
     });
   }, [activeTabId]);
 
-  const scrollLeft = () => {
-    if (!scrollContainerRef.current) return;
+  const scrollLeft = (): void => {
+    if (scrollContainerRef.current === null) return;
     scrollContainerRef.current.scrollBy({ left: -200, behavior: 'smooth' });
   };
 
-  const scrollRight = () => {
-    if (!scrollContainerRef.current) return;
+  const scrollRight = (): void => {
+    if (scrollContainerRef.current === null) return;
     scrollContainerRef.current.scrollBy({ left: 200, behavior: 'smooth' });
   };
 
-  const handleSave = async () => {
-    if (!activeTabId || isSaving) return;
+  const handleSave = async (): Promise<void> => {
+    if (activeTabId === null || isSaving) return;
     
     setIsSaving(true);
     try {
       await invokeSaveHandler(activeTabId);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Failed to save:', error);
     } finally {
       setIsSaving(false);
@@ -92,10 +100,10 @@ export function TabBar() {
 
   // Add Ctrl+S keyboard shortcut
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        handleSave();
+        void handleSave();
       }
     };
 
@@ -105,8 +113,8 @@ export function TabBar() {
     };
   }, [activeTabId, isSaving, invokeSaveHandler]);
 
-  const activeTab = tabs.find(tab => tab.id === activeTabId);
-  const isActiveTabDirty = activeTabId ? !!status.isDirtyByTabId[activeTabId] : false;
+  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? null;
+  const isActiveTabDirty = activeTabId !== null ? status.isDirtyByTabId[activeTabId] === true : false;
 
   if (tabs.length === 0) {
     return (
@@ -123,16 +131,16 @@ export function TabBar() {
           display: none;
         }
       `}</style>
-      {closeDialogTabId && (() => {
+      {closeDialogTabId !== null && (() => {
         const tab = tabs.find(t => t.id === closeDialogTabId);
-        if (!tab) return null;
+        if (tab === undefined) return null;
 
-        const isDirty = !!status.isDirtyByTabId[tab.id];
-        const name = status.nameByTabId[tab.id] || tab.name;
+        const isDirty = status.isDirtyByTabId[tab.id] === true;
+        const name = status.nameByTabId[tab.id] !== '' ? status.nameByTabId[tab.id] : tab.name;
 
         return (
           <ConfirmDialog
-            open={!!closeDialogTabId}
+            open={closeDialogTabId !== null}
             onOpenChange={(open) => {
               if (!open) setCloseDialogTabId(null);
             }}
@@ -140,20 +148,22 @@ export function TabBar() {
             description={`"${name}" has unsaved changes. What would you like to do?`}
             confirmLabel={isClosing ? 'Saving…' : 'Save'}
             cancelLabel="Cancel"
-            onConfirm={async () => {
-              setIsClosing(true);
-              try {
-                await invokeSaveHandler(tab.id);
-                closeTab(tab.id);
-              } finally {
-                setIsClosing(false);
-              }
+            onConfirm={() => {
+              void (async () => {
+                setIsClosing(true);
+                try {
+                  await invokeSaveHandler(tab.id);
+                  closeTab(tab.id);
+                } finally {
+                  setIsClosing(false);
+                }
+              })();
             }}
             onDiscard={async () => {
               await invokeDiscardHandler(tab.id);
               // Close first so editor unmounts immediately and no further triggers can be queued.
               closeTab(tab.id);
-              if (workspace) {
+              if (workspace !== null) {
                 await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
               }
             }}
@@ -186,16 +196,17 @@ export function TabBar() {
         >
           {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
-        const isDirty = !!status.isDirtyByTabId[tab.id];
-        const label = status.nameByTabId[tab.id] || tab.name;
+        const isDirty = status.isDirtyByTabId[tab.id] === true;
+        const statusName = status.nameByTabId[tab.id];
+        const label = statusName !== '' ? statusName : tab.name;
         
-        let icon = null;
+        let icon: ReactElement | null = null;
         
         if (tab.type === 'request') {
-          const reqMetadata = tab.metadata as RequestMetadata | undefined;
-          const badge = status.badgeByTabId[tab.id] || reqMetadata?.badge;
-          if (badge) {
-            icon = <Badge color={badge.color as any} size="1" style={{ fontSize: '10px', fontWeight: 700 }}>{badge.primary}</Badge>;
+          const reqMetadata = isRequestMetadata(tab.metadata) ? tab.metadata : undefined;
+          const badge = status.badgeByTabId[tab.id] ?? reqMetadata?.badge;
+          if (badge !== undefined) {
+            icon = <Badge color={badge.color as never} size="1" style={{ fontSize: '10px', fontWeight: 700 }}>{badge.primary}</Badge>;
           } else {
             icon = <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>REQ</Badge>;
           }
@@ -204,13 +215,13 @@ export function TabBar() {
         } else if (tab.type === 'folder') {
           icon = <FolderIcon className="w-4 h-4" style={{ color: 'var(--accent-9)' }} />;
         } else if (tab.type === 'runner') {
-          const meta = tab.metadata as RunnerMetadata;
+          const meta = isRunnerMetadata(tab.metadata) ? tab.metadata : null;
           // Show status icon
-          icon = meta.status === 'running' ? (
+          icon = meta?.status === 'running' ? (
             <ArrowPathIcon className="w-4 h-4 animate-spin" style={{ color: 'var(--blue-9)' }} />
-          ) : meta.status === 'completed' ? (
+          ) : meta?.status === 'completed' ? (
             <CheckCircleIcon className="w-4 h-4" style={{ color: 'var(--green-9)' }} />
-          ) : meta.status === 'error' ? (
+          ) : meta?.status === 'error' ? (
             <XCircleIcon className="w-4 h-4" style={{ color: 'var(--red-9)' }} />
           ) : (
             <PlayIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
@@ -218,15 +229,15 @@ export function TabBar() {
         }
 
         let tooltip = label;
-        if (tab.type === 'request' && tab.metadata) {
-          const reqMetadata = tab.metadata as RequestMetadata;
-          const parts = [];
-          if (reqMetadata.badge) {
+        if (tab.type === 'request' && isRequestMetadata(tab.metadata)) {
+          const reqMetadata = tab.metadata;
+          const parts: string[] = [];
+          if (reqMetadata.badge !== undefined) {
             parts.push(reqMetadata.badge.primary);
-            if (reqMetadata.badge.secondary) parts.push(reqMetadata.badge.secondary);
+            if (reqMetadata.badge.secondary !== undefined && reqMetadata.badge.secondary !== '') parts.push(reqMetadata.badge.secondary);
           }
           parts.push(label);
-          if (reqMetadata.description) parts.push(reqMetadata.description);
+          if (reqMetadata.description !== undefined && reqMetadata.description !== '') parts.push(reqMetadata.description);
           tooltip = parts.join(' - ');
         }
 
@@ -234,7 +245,7 @@ export function TabBar() {
           <div
             key={tab.id}
             ref={(el) => {
-              if (el) {
+              if (el !== null) {
                 tabRefsRef.current.set(tab.id, el);
               } else {
                 tabRefsRef.current.delete(tab.id);
@@ -255,16 +266,16 @@ export function TabBar() {
               // switching so the session state is up-to-date when the new tab
               // mounts and reads it. invokeFlushHandler is a no-op when there is
               // no pending save (hasPendingSaveRef.current is false).
-              if (activeTabId) {
+              if (activeTabId !== null) {
                 void invokeFlushHandler(activeTabId).then(() => {
                   setActiveTab(tab.id);
-                  if (tab.isTemporary) {
+                  if (tab.isTemporary === true) {
                     clearTemporaryFlag(tab.id);
                   }
                 });
               } else {
                 setActiveTab(tab.id);
-                if (tab.isTemporary) {
+                if (tab.isTemporary === true) {
                   clearTemporaryFlag(tab.id);
                 }
               }
@@ -272,7 +283,7 @@ export function TabBar() {
             title={tooltip}
           >
             {icon}
-            <span className="truncate" style={{ maxWidth: '120px', fontStyle: tab.isTemporary ? 'italic' : 'normal' }}>{label}</span>
+            <span className="truncate" style={{ maxWidth: '120px', fontStyle: tab.isTemporary === true ? 'italic' : 'normal' }}>{label}</span>
             {isDirty && <span className="text-xxs" style={{ color: 'var(--accent-9)' }}>●</span>}
             <button
               className="border-none bg-transparent cursor-pointer"
@@ -313,7 +324,7 @@ export function TabBar() {
         </button>
 
         <button
-          onClick={handleSave}
+          onClick={() => { void handleSave(); }}
           disabled={!isActiveTabDirty || isSaving}
           className="border-none bg-transparent h-full px-2 border-l"
           style={{
