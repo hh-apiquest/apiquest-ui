@@ -353,7 +353,7 @@ function CollectionLeafRequestItem({
         }}
       >
         <DropTargetZones activeDragItem={activeDragItem} dropPreview={dropPreview} zones={requestDropTargets} />
-        {badge !== undefined ? <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>{badge.primary}</Badge> : <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>REQ</Badge>}
+        {badge !== undefined ? <Badge color={badge.color as never} size="1" style={{ fontSize: '10px', fontWeight: 700 }}>{badge.primary}</Badge> : <Badge color="gray" size="1" style={{ fontSize: '10px', fontWeight: 700 }}>REQ</Badge>}
         {activeRenameId === renameId ? <InlineRenameField inputRef={requestInputRef} value={inlineRenameValue} onChange={setInlineRenameValue} onSubmit={handleInlineRenameSubmit} onCancel={handleInlineRenameCancel} /> : <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>}
         <RequestMetadataIcons resource={item} />
         <UnifiedContextMenu type="request" item={item} trigger={<button className="hover-visible" style={{ padding: '2px', borderRadius: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--gray-10)' }} onClick={(e) => e.stopPropagation()}><EllipsisVerticalIcon className="w-4 h-4" /></button>} onAction={handleMenuAction} />

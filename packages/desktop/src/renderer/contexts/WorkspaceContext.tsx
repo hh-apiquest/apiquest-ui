@@ -108,7 +108,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps): ReactEl
   // Collection cache - lazy-loaded on first access
   const [collectionCache, setCollectionCache] = useState<Map<string, Collection>>(new Map());
 
-  const openWorkspace = async (folderPath: string): Promise<void> => {
+  const openWorkspace = useCallback(async (folderPath: string): Promise<void> => {
     setIsLoading(true);
     setError(null);
     
@@ -129,14 +129,14 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps): ReactEl
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const closeWorkspace = (): void => {
+  const closeWorkspace = useCallback((): void => {
     setWorkspace(null);
     localStorage.removeItem('lastWorkspace');
-  };
+  }, []);
 
-  const refreshWorkspace = async (): Promise<void> => {
+  const refreshWorkspace = useCallback(async (): Promise<void> => {
     if (workspace === null) {
       return;
     }
@@ -144,7 +144,7 @@ export function WorkspaceProvider({ children }: WorkspaceProviderProps): ReactEl
     console.log('[WorkspaceContext] Refreshing workspace, clearing collection cache');
     setCollectionCache(new Map()); // Clear cache to force reload from disk
     await openWorkspace(workspace.path);
-  };
+  }, [workspace, openWorkspace]);
 
   // Get collection (with lazy loading & caching)
   const getCollection = useCallback(async (collectionId: string): Promise<Collection> => {

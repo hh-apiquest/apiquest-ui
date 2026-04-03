@@ -37,6 +37,7 @@ export function AppBar(): JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceWithMetadata[]>([]);
   const [workspaceSearch, setWorkspaceSearch] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const isMac = navigator.userAgent.includes('Mac') || navigator.platform.toLowerCase().includes('mac');
 
   useEffect(() => {
     void loadGlobalVariables();
@@ -92,7 +93,10 @@ export function AppBar(): JSX.Element {
   return (
     <div
       className="h-10 border-b flex items-center justify-between px-2"
-      style={dragRegionStyle}
+      style={{
+        ...dragRegionStyle,
+        paddingLeft: isMac ? '84px' : dragRegionStyle.paddingLeft,
+      }}
     >
       <div className="flex items-center gap-1">
         <img
@@ -282,32 +286,36 @@ export function AppBar(): JSX.Element {
           )}
         </button>
 
-        <div style={{ height: '24px', width: '1px', background: 'var(--gray-7)', margin: '0 4px' }} />
+        {!isMac && (
+          <>
+            <div style={{ height: '24px', width: '1px', background: 'var(--gray-7)', margin: '0 4px' }} />
 
-        <button
-          onClick={() => { void window.quest.window.minimize(); }}
-          className="p-1 rounded cursor-pointer"
-          style={{ border: 'none', background: 'transparent' }}
-          title="Minimize"
-        >
-          <MinusIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
-        </button>
-        <button
-          onClick={() => { void window.quest.window.maximize(); }}
-          className="p-1 rounded cursor-pointer"
-          style={{ border: 'none', background: 'transparent' }}
-          title="Maximize/Restore"
-        >
-          <Square2StackIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
-        </button>
-        <button
-          onClick={() => { void window.quest.window.close(); }}
-          className="p-1 rounded cursor-pointer"
-          style={{ border: 'none', background: 'transparent' }}
-          title="Close"
-        >
-          <XMarkIcon className="w-4 h-4" />
-        </button>
+            <button
+              onClick={() => { void window.quest.window.minimize(); }}
+              className="p-1 rounded cursor-pointer"
+              style={{ border: 'none', background: 'transparent' }}
+              title="Minimize"
+            >
+              <MinusIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
+            </button>
+            <button
+              onClick={() => { void window.quest.window.maximize(); }}
+              className="p-1 rounded cursor-pointer"
+              style={{ border: 'none', background: 'transparent' }}
+              title="Maximize/Restore"
+            >
+              <Square2StackIcon className="w-4 h-4" style={{ color: 'var(--gray-9)' }} />
+            </button>
+            <button
+              onClick={() => { void window.quest.window.close(); }}
+              className="p-1 rounded cursor-pointer"
+              style={{ border: 'none', background: 'transparent' }}
+              title="Close"
+            >
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          </>
+        )}
       </div>
 
       <VariableEditorDialog
