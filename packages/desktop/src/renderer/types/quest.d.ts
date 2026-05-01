@@ -57,7 +57,7 @@ declare global {
         
         // Collection operations
         loadCollection: (workspaceId: string, collectionId: string) => Promise<Collection>;
-        saveCollection: (fworkspaceId: string, collectionId: string, collection: Collection) => Promise<void>;
+        saveCollection: (workspaceId: string, collectionId: string, collection: Collection) => Promise<void>;
         createCollection: (workspaceId: string, name: string, protocol: string) => Promise<string>;
         renameCollection: (workspaceId: string, collectionId: string, newName: string) => Promise<void>;
         duplicateCollection: (workspaceId: string, collectionId: string, newName: string) => Promise<string>;
@@ -192,7 +192,7 @@ declare global {
         // Collection runner methods
         runCollection: (params: RunCollectionParams) => Promise<{ success: boolean; runId: string }>;
         stopRun: (executionId: string) => Promise<{ success: boolean }>;
-        getRunStatus: (runId: string) => Promise<RunnerExecutionState | null>;
+        getStatus: (runId: string) => Promise<RunnerExecutionState | null>;
       };
     };
   }

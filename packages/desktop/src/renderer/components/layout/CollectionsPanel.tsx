@@ -1,6 +1,6 @@
 // CollectionsPanel - Collections tree with all collection management logic
 import { useState, useEffect, type ReactElement } from 'react';
-import { useWorkspace, useTabNavigation, useScreenMode, useTabStatusActions } from '../../contexts';
+import { useWorkspace, useTabNavigation, useScreenMode, useTabStatusActions, useToast } from '../../contexts';
 import {
   DndContext,
   PointerSensor,
@@ -57,6 +57,7 @@ export function CollectionsPanel(): ReactElement | null {
   const { workspace, refreshWorkspace } = useWorkspace();
   const { tabs, closeTab } = useTabNavigation();
   const { setMode } = useScreenMode();
+  const toast = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [activeRenameId, setActiveRenameId] = useState<string | null>(null);
@@ -174,7 +175,7 @@ export function CollectionsPanel(): ReactElement | null {
       await refreshWorkspace();
     } catch (error) {
       console.error('Failed to move tree item:', error);
-      alert('Failed to move item');
+      toast.error('Failed to move item');
     } finally {
       clearDragState();
     }

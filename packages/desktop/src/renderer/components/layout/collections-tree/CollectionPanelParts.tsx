@@ -4,7 +4,7 @@ import { Button, TextField } from '@radix-ui/themes';
 import { ChevronDownIcon, ChevronRightIcon, Cog6ToothIcon, EllipsisVerticalIcon, ExclamationTriangleIcon, FolderPlusIcon, PlusIcon, PuzzlePieceIcon, RectangleStackIcon } from '@heroicons/react/24/outline';
 import type { Collection, VariableValue } from '@apiquest/types';
 import { pluginLoader, pluginManagerService } from '../../../services';
-import { useScreenMode, useTabNavigation, useTabStatusActions, useWorkspace } from '../../../contexts';
+import { useScreenMode, useTabNavigation, useTabStatusActions, useWorkspace, useToast } from '../../../contexts';
 import { ConfirmDialog } from '../../shared/ConfirmDialog';
 import { InputDialog } from '../../shared/InputDialog';
 import { UnifiedContextMenu, type MenuAction } from '../../shared/UnifiedContextMenu';
@@ -45,6 +45,7 @@ export function CollectionItem({
   const { workspace, getCollection, refreshWorkspace } = useWorkspace();
   const { tabs, closeTab, openRequest, openCollection } = useTabNavigation();
   const { setName } = useTabStatusActions();
+  const toast = useToast();
   const renameId = `collection:${collection.id}`;
   const collectionDropTarget = createDropTarget({
     targetCollectionId: collection.id,
@@ -84,7 +85,7 @@ export function CollectionItem({
       await refreshWorkspace();
     } catch (error) {
       console.error('Failed to save collection variables:', error);
-      alert('Failed to save collection variables');
+      toast.error('Failed to save collection variables');
     }
   };
 
@@ -120,7 +121,7 @@ export function CollectionItem({
         await refreshWorkspace();
       } catch (error) {
         console.error('Failed to rename collection:', error);
-        alert('Failed to rename collection');
+        toast.error('Failed to rename collection');
       }
     },
   });
@@ -133,7 +134,7 @@ export function CollectionItem({
       setDuplicatingCollection(false);
     } catch (error) {
       console.error('Failed to duplicate collection:', error);
-      alert('Failed to duplicate collection');
+      toast.error('Failed to duplicate collection');
     }
   };
 
@@ -146,7 +147,7 @@ export function CollectionItem({
       setDeletingCollection(false);
     } catch (error) {
       console.error('Failed to delete collection:', error);
-      alert('Failed to delete collection');
+      toast.error('Failed to delete collection');
     }
   };
 
@@ -177,7 +178,7 @@ export function CollectionItem({
             }
           } catch (error) {
             console.error('Failed to export collection:', error);
-            alert('Failed to export collection');
+            toast.error('Failed to export collection');
           }
         })();
         break;
@@ -264,7 +265,7 @@ export function CollectionItem({
           }
         } catch (error) {
           console.error('Failed to add request:', error);
-          alert('Failed to add request');
+          toast.error('Failed to add request');
         }
       })(); }} />
 
@@ -276,7 +277,7 @@ export function CollectionItem({
           setIsExpanded(true);
         } catch (error) {
           console.error('Failed to add folder:', error);
-          alert('Failed to add folder');
+          toast.error('Failed to add folder');
         }
       })(); }} />
 
@@ -298,6 +299,7 @@ export function NewCollectionDialog({ open, onOpenChange }: NewCollectionDialogP
   const [name, setName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const { workspace, refreshWorkspace } = useWorkspace();
+  const toast = useToast();
   const { setMode } = useScreenMode();
   const trimmedName = name.trim();
 
@@ -312,7 +314,7 @@ export function NewCollectionDialog({ open, onOpenChange }: NewCollectionDialogP
       setName('');
     } catch (error) {
       console.error('Failed to create collection:', error);
-      alert(`Failed to create collection: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Failed to create collection: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsCreating(false);
     }

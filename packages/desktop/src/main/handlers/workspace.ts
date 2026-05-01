@@ -264,7 +264,7 @@ export function registerWorkspaceHandlers(): void {
       const collection = convertResult as {
         info: { id?: string; name?: string };
         protocol?: string;
-        variables?: unknown[];
+        variables?: Record<string, unknown> | unknown[];
         items?: unknown[];
         warnings?: string[];
       };
@@ -283,7 +283,7 @@ export function registerWorkspaceHandlers(): void {
 
       collection.info.name = rawName;
       if (collection.protocol === undefined || collection.protocol.trim() === '') collection.protocol = 'http';
-      if (!Array.isArray(collection.variables)) collection.variables = [];
+      if (typeof collection.variables !== 'object' || collection.variables === null || Array.isArray(collection.variables)) collection.variables = {};
       if (!Array.isArray(collection.items)) collection.items = [];
 
       // Step 6: Persist the collection
@@ -315,7 +315,7 @@ export function registerWorkspaceHandlers(): void {
     const fileName = collectionRegistry.get(collectionId);
     if (fileName === undefined) throw new Error(`Collection not found: ${collectionId}`);
     
-    const collectionPath = path.join(workspacePath, fileName);
+    const collectionPath = path.join(workspacePath, 'collections', fileName);
     const result = await dialog.showSaveDialog({
       defaultPath: fileName,
       filters: [

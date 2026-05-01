@@ -1,6 +1,6 @@
 // EnvironmentsPanel - Environments list with full CRUD functionality
 import { useState, useRef, useEffect } from 'react';
-import { useWorkspace } from '../../contexts';
+import { useWorkspace, useToast } from '../../contexts';
 import type { Environment, VariableValue } from '@apiquest/types';
 import type { EnvironmentMetadata } from '../../types/environment';
 import { TextField } from '@radix-ui/themes';
@@ -16,8 +16,9 @@ import {
 } from '@heroicons/react/24/outline';
 
 export function EnvironmentsPanel(): JSX.Element | null {
-  const { 
-    workspace, 
+  const toast = useToast();
+  const {
+    workspace,
     activeEnvironment,
     setActiveEnvironment,
     createEnvironment, 
@@ -63,7 +64,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       setEditingEnv(env);
     } catch (error) {
       console.error('Failed to load environment:', error);
-      alert('Failed to load environment');
+      toast.error('Failed to load environment');
     }
   };
 
@@ -77,7 +78,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       setEnvData(null);
     } catch (error) {
       console.error('Failed to save environment:', error);
-      alert('Failed to save environment');
+      toast.error('Failed to save environment');
     }
   };
 
@@ -86,7 +87,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       await createEnvironment(name);
     } catch (error) {
       console.error('Failed to create environment:', error);
-      alert('Failed to create environment');
+      toast.error('Failed to create environment');
     }
   };
 
@@ -98,7 +99,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       setRenamingEnv(null);
     } catch (error) {
       console.error('Failed to rename environment:', error);
-      alert('Failed to rename environment');
+      toast.error('Failed to rename environment');
     }
   };
 
@@ -110,7 +111,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       setDuplicatingEnv(null);
     } catch (error) {
       console.error('Failed to duplicate environment:', error);
-      alert('Failed to duplicate environment');
+      toast.error('Failed to duplicate environment');
     }
   };
 
@@ -122,7 +123,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
       setDeletingEnv(null);
     } catch (error) {
       console.error('Failed to delete environment:', error);
-      alert('Failed to delete environment');
+      toast.error('Failed to delete environment');
     }
   };
 
@@ -142,7 +143,7 @@ export function EnvironmentsPanel(): JSX.Element | null {
         await renameEnvironment(env, inlineRenameValue.trim());
       } catch (error) {
         console.error('Failed to rename environment:', error);
-        alert('Failed to rename environment');
+        toast.error('Failed to rename environment');
       }
     }
     setActiveRenameId(null);

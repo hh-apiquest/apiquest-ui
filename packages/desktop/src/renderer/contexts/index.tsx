@@ -9,6 +9,7 @@ export { NetworkProvider, useNetwork } from './NetworkContext';
 export { TrashProvider, useTrash } from './TrashContext';
 export { TabProvider, useTabNavigation, useTabStatusState, useTabStatusActions, useTabEditorBridge } from './TabContext';
 export { ScreenModeProvider, useScreenMode } from './ScreenModeContext';
+export { ToastProvider, useToast } from './ToastContext';
 export type { ScreenMode, SettingsTab } from './ScreenModeContext';
 
 // Combined provider for easy app wrapping
@@ -21,6 +22,7 @@ import { NetworkProvider } from './NetworkContext';
 import { TrashProvider } from './TrashContext';
 import { TabProvider } from './TabContext';
 import { ScreenModeProvider } from './ScreenModeContext';
+import { ToastProvider } from './ToastContext';
 import { SessionSync } from './SessionSync';
 
 interface AppProvidersProps {
@@ -35,20 +37,22 @@ export function AppProviders({ children }: AppProvidersProps): ReactElement {
   return (
     <ThemeProvider>
       <SettingsProvider>
-        <ScreenModeProvider>
-          <WorkspaceProvider>
-              <TabProvider>
-                <SessionSync />
-                <ConsoleProvider>
-                  <NetworkProvider>
-                    <TrashProvider>
-                      {children}
-                    </TrashProvider>
-                  </NetworkProvider>
-                </ConsoleProvider>
-              </TabProvider>
-          </WorkspaceProvider>
-        </ScreenModeProvider>
+        <ToastProvider>
+          <ScreenModeProvider>
+            <WorkspaceProvider>
+                <TabProvider>
+                  <SessionSync />
+                  <ConsoleProvider>
+                    <NetworkProvider>
+                      <TrashProvider>
+                        {children}
+                      </TrashProvider>
+                    </NetworkProvider>
+                  </ConsoleProvider>
+                </TabProvider>
+            </WorkspaceProvider>
+          </ScreenModeProvider>
+        </ToastProvider>
       </SettingsProvider>
     </ThemeProvider>
   );

@@ -5,7 +5,7 @@ import { Badge } from '@radix-ui/themes';
 import { ChevronDownIcon, ChevronRightIcon, EllipsisVerticalIcon, FolderIcon, FolderPlusIcon, PlusIcon } from '@heroicons/react/24/outline';
 import type { CollectionItem } from '@apiquest/types';
 import { pluginLoader } from '../../../services';
-import { useTabNavigation, useTabStatusActions, useWorkspace } from '../../../contexts';
+import { useTabNavigation, useTabStatusActions, useWorkspace, useToast } from '../../../contexts';
 import { ConfirmDialog } from '../../shared/ConfirmDialog';
 import { InputDialog } from '../../shared/InputDialog';
 import { RequestMetadataIcons } from '../../shared/RequestMetadataIcons';
@@ -52,6 +52,7 @@ function CollectionFolderItem({
   const { tabs, closeTab, openRequest, openFolder } = useTabNavigation();
   const { setName } = useTabStatusActions();
   const { workspace, refreshWorkspace } = useWorkspace();
+  const toast = useToast();
   const renameId = `folder:${item.id}`;
   const dragItem = buildDragItem({ item, sourceCollectionId: collectionId, sourceParentId: parentId, sourceIndex: itemIndex });
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -122,7 +123,7 @@ function CollectionFolderItem({
         await refreshWorkspace();
       } catch (error) {
         console.error('Failed to rename folder:', error);
-        alert('Failed to rename folder');
+        toast.error('Failed to rename folder');
       }
     },
   });
@@ -137,7 +138,7 @@ function CollectionFolderItem({
       setDeletingFolder(false);
     } catch (error) {
       console.error('Failed to delete folder:', error);
-      alert('Failed to delete folder');
+      toast.error('Failed to delete folder');
     }
   };
 
@@ -217,7 +218,7 @@ function CollectionFolderItem({
           }
         } catch (error) {
           console.error('Failed to add request:', error);
-          alert('Failed to add request');
+          toast.error('Failed to add request');
         }
       })(); }} />
 
@@ -229,7 +230,7 @@ function CollectionFolderItem({
           setIsExpanded(true);
         } catch (error) {
           console.error('Failed to add folder:', error);
-          alert('Failed to add folder');
+          toast.error('Failed to add folder');
         }
       })(); }} />
 
@@ -259,6 +260,7 @@ function CollectionLeafRequestItem({
   const { tabs, closeTab, openRequest } = useTabNavigation();
   const { setName } = useTabStatusActions();
   const { workspace, refreshWorkspace } = useWorkspace();
+  const toast = useToast();
   const renameId = `request:${item.id}`;
   const dragItem = buildDragItem({ item, sourceCollectionId: collectionId, sourceParentId: parentId, sourceIndex: itemIndex });
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `drag-request:${item.id}`, data: { dragItem } });
@@ -303,7 +305,7 @@ function CollectionLeafRequestItem({
         await refreshWorkspace();
       } catch (error) {
         console.error('Failed to rename request:', error);
-        alert('Failed to rename request');
+        toast.error('Failed to rename request');
       }
     },
   });
@@ -317,7 +319,18 @@ function CollectionLeafRequestItem({
       setDeletingRequest(false);
     } catch (error) {
       console.error('Failed to delete request:', error);
-      alert('Failed to delete request');
+      toast.error('Failed to delete request');
+    }
+  };
+
+  const handleDuplicateRequest = async (): Promise<void> => {
+    if (workspace === null) return;
+    try {
+      await window.quest.workspace.duplicateRequest(workspace.id, collectionId, item.id, parentId);
+      await refreshWorkspace();
+    } catch (error) {
+      console.error('Failed to duplicate request:', error);
+      toast.error('Failed to duplicate request');
     }
   };
 
@@ -327,7 +340,7 @@ function CollectionLeafRequestItem({
         handleStartInlineRename();
         break;
       case 'duplicate':
-        console.log('Duplicate request:', item.name);
+        void handleDuplicateRequest();
         break;
       case 'delete':
         setDeletingRequest(true);

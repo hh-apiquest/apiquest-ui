@@ -7,7 +7,7 @@ import {
   FolderPlusIcon,
   PencilSquareIcon
 } from '@heroicons/react/24/outline';
-import { useScreenMode, useWorkspace } from '../../contexts';
+import { useScreenMode, useWorkspace, useToast } from '../../contexts';
 import type { WorkspaceWithMetadata } from '../../types/quest';
 
 interface EditingWorkspace {
@@ -35,6 +35,7 @@ function getWorkspaceDisplayName(workspace: WorkspaceWithMetadata): string {
 export function WorkspaceManager(): JSX.Element {
   const { setMode } = useScreenMode();
   const { openWorkspace } = useWorkspace();
+  const toast = useToast();
   const [workspaces, setWorkspaces] = useState<WorkspaceWithMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,7 +65,7 @@ export function WorkspaceManager(): JSX.Element {
       setMode('request-editor'); // Switch back to main view
     } catch (error) {
       console.error('Failed to open workspace:', error);
-      alert('Failed to open workspace');
+      toast.error('Failed to open workspace');
     }
   };
 
@@ -337,6 +338,7 @@ function CreateWorkspaceDialog({
   onOpenChange,
   onCreated
 }: WorkspaceDialogProps): JSX.Element {
+  const toast = useToast();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [useCustomLocation, setUseCustomLocation] = useState(false);
@@ -360,7 +362,7 @@ function CreateWorkspaceDialog({
     }
 
     if (useCustomLocation && customLocation.trim() === '') {
-      alert('Please select a location');
+      toast.warning('Please select a location');
       return;
     }
 
@@ -387,7 +389,7 @@ function CreateWorkspaceDialog({
       setCustomLocation('');
     } catch (error) {
       console.error('Failed to create workspace:', error);
-      alert('Failed to create workspace');
+      toast.error('Failed to create workspace');
     } finally {
       setIsCreating(false);
     }
@@ -501,6 +503,7 @@ function AddExistingWorkspaceDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: () => Promise<void>;
 }): JSX.Element {
+  const toast = useToast();
   const [selectedPath, setSelectedPath] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
@@ -539,7 +542,7 @@ function AddExistingWorkspaceDialog({
       setSelectedPath('');
     } catch (error) {
       console.error('Failed to add workspace:', error);
-      alert('Failed to add workspace. Make sure the folder contains valid workspace structure.');
+      toast.error('Failed to add workspace. Make sure the folder contains valid workspace structure.');
     } finally {
       setIsAdding(false);
     }
@@ -609,6 +612,7 @@ function EditWorkspaceDialog({
   onClose,
   onSaved
 }: EditWorkspaceDialogProps): JSX.Element {
+  const toast = useToast();
   const [name, setName] = useState(workspace.name);
   const [description, setDescription] = useState(workspace.description ?? '');
   const [isSaving, setIsSaving] = useState(false);
@@ -629,7 +633,7 @@ function EditWorkspaceDialog({
       onClose();
     } catch (error) {
       console.error('Failed to update workspace:', error);
-      alert('Failed to update workspace');
+      toast.error('Failed to update workspace');
     } finally {
       setIsSaving(false);
     }
