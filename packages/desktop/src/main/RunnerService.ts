@@ -217,7 +217,7 @@ class RunnerService {
    * Execute a single request in collection context using ephemeral collection
    */
   async executeRequest(params: RunRequestParams): Promise<unknown> {
-    const { executionId, protocol, request, variables, workspaceId, collectionId } = params;
+    const { executionId, protocol, request, variables, workspaceId, collectionId, options } = params;
 
     const collection = await this.loadCollection(workspaceId, collectionId);
     
@@ -270,7 +270,29 @@ class RunnerService {
         allKeys: Object.keys(ephemeralCollection)
       });
       
+      // Merge runtime options: collection.options < request.options (request overrides collection)
+      const collectionOptions = collection.options ?? {};
+      const requestOptions = options ?? {};
+      const mergedOptions: Record<string, unknown> = {
+        ...collectionOptions,
+        ...requestOptions,
+        // Deep-merge nested objects (ssl, proxy, timeout) so partial overrides work
+        ...(collectionOptions.ssl !== undefined || requestOptions.ssl !== undefined
+          ? { ssl: { ...collectionOptions.ssl, ...requestOptions.ssl } }
+          : {}),
+        ...(collectionOptions.proxy !== undefined || requestOptions.proxy !== undefined
+          ? { proxy: { ...collectionOptions.proxy, ...requestOptions.proxy } }
+          : {}),
+        ...(collectionOptions.timeout !== undefined || requestOptions.timeout !== undefined
+          ? { timeout: { ...collectionOptions.timeout, ...requestOptions.timeout } }
+          : {}),
+        ...(collectionOptions.plugins !== undefined || requestOptions.plugins !== undefined
+          ? { plugins: { ...collectionOptions.plugins, ...requestOptions.plugins } }
+          : {}),
+      };
+
       const runResult = await runner.run(ephemeralCollection, {
+        ...mergedOptions,
         environment: variables?.environment !== undefined ? {
           name: 'Active Environment',
           variables: variables.environment
@@ -439,48 +461,56 @@ class RunnerService {
         ? await this.loadEnvironment(workspaceId, config.environmentId)
         : undefined;
     
-    // Build run options from config
+    // Build run options from config, merging collection-level options as defaults
+    const collectionOpts = collection.options ?? {};
     const runOptions: RunOptions = {
+      // Spread collection-level options as baseline defaults
+      ...collectionOpts,
+
       // Variables
       globalVariables,
-        ...(environmentVariables !== undefined ? {
-          environment: {
-            name: config.environmentId ?? 'Active Environment',
-            variables: environmentVariables
-          }
-        } : {}),
+      ...(environmentVariables !== undefined ? {
+        environment: {
+          name: config.environmentId ?? 'Active Environment',
+          variables: environmentVariables
+        }
+      } : {}),
       
       // Iterations and test data
       iterations: config.iterations,
-        ...(typeof config.dataFile === 'string' && config.dataFile.trim() !== '' ? { dataFile: config.dataFile } : {}),  // dataFile is a path string
-        ...(config.disableCollectionTestData === true ? { ignoreCollectionTestData: true } : {}),
+      ...(typeof config.dataFile === 'string' && config.dataFile.trim() !== '' ? { dataFile: config.dataFile } : {}),
+      ...(config.disableCollectionTestData === true ? { ignoreCollectionTestData: true } : {}),
       
-      // Execution options - include parallel execution settings
-      ...(config.delay !== undefined || config.bail !== undefined || config.concurrency !== undefined ? {
+      // Execution options - merge with collection-level execution options
+      ...(config.delay !== undefined || config.bail !== undefined || config.concurrency !== undefined || collectionOpts.execution !== undefined ? {
         execution: {
+          ...collectionOpts.execution,
           ...(config.delay !== undefined ? { delay: config.delay } : {}),
           ...(config.bail !== undefined ? { bail: config.bail } : {}),
           ...(config.concurrency !== undefined ? { maxConcurrency: config.concurrency } : {})
         }
       } : {}),
       
-      // Timeout
-        ...(config.timeout !== undefined ? {
-          timeout: { request: config.timeout }
-        } : {}),
+      // Timeout - merge with collection-level timeout
+      ...(config.timeout !== undefined || collectionOpts.timeout !== undefined ? {
+        timeout: {
+          ...collectionOpts.timeout,
+          ...(config.timeout !== undefined ? { request: config.timeout } : {})
+        }
+      } : {}),
       
-      // SSL options
-      ...(config.insecure !== undefined ? {
+      // SSL options - merge with collection-level SSL
+      ...(config.insecure !== undefined || collectionOpts.ssl !== undefined ? {
         ssl: {
-          validateCertificates: !config.insecure
+          ...collectionOpts.ssl,
+          ...(config.insecure !== undefined ? { validateCertificates: !config.insecure } : {})
         }
       } : {}),
       
       // Abort signal for external cancellation
-        signal: abortController.signal,
+      signal: abortController.signal,
       
       // Note: saveResponses and persistVariables are handled post-execution
-      // Note: strictMode is read from collection.options.strictMode automatically by runner
     };
     
     // Execute collection asynchronously

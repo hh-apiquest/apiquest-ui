@@ -488,7 +488,8 @@ export function RequestEditor({ tab }: RequestEditorProps): React.ReactElement {
           collection: collectionVariables,
           environment: environmentVariables,
           global: globalVariables
-        }
+        },
+        options: effectiveRequest.options
       });
 
       // Update execution state with result
