@@ -570,20 +570,37 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
   }, [activeTabId]);
 
   // Status actions (editors call these; editors must NOT consume TabStatusState)
+  // Both setters bail out when the value is unchanged. Editors call them on every
+  // keystroke; without the bail-out each call produced a new status/tabs object,
+  // re-rendering every context consumer and re-running effects that depend on them.
   const setDirty = useCallback((tabId: string, isDirty: boolean): void => {
-    setStatus((prev) => ({
-      ...prev,
-      isDirtyByTabId: { ...prev.isDirtyByTabId, [tabId]: isDirty }
-    }));
+    setStatus((prev) => {
+      if (prev.isDirtyByTabId[tabId] === isDirty) {
+        return prev;
+      }
+      return {
+        ...prev,
+        isDirtyByTabId: { ...prev.isDirtyByTabId, [tabId]: isDirty }
+      };
+    });
   }, []);
 
   const setName = useCallback((tabId: string, name: string): void => {
-    setStatus((prev) => ({
-      ...prev,
-      nameByTabId: { ...prev.nameByTabId, [tabId]: name }
-    }));
+    setStatus((prev) => {
+      if (prev.nameByTabId[tabId] === name) {
+        return prev;
+      }
+      return {
+        ...prev,
+        nameByTabId: { ...prev.nameByTabId, [tabId]: name }
+      };
+    });
     // Also keep navigation tab name in sync for existing UI expectations
-    setTabsData((prev) => prev.map((t) => (t.id === tabId ? { ...t, name } : t)));
+    setTabsData((prev) => (
+      prev.some((t) => t.id === tabId && t.name !== name)
+        ? prev.map((t) => (t.id === tabId ? { ...t, name } : t))
+        : prev
+    ));
   }, []);
 
   const setMetadata = useCallback((tabId: string, metadata: RequestMetadata | RunnerMetadata): void => {
@@ -619,8 +636,10 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
     return tabs.find((tab) => tab.id === activeTabId) ?? null;
   };
 
-  // Load session from storage
-  const loadSession = async (workspaceId: string): Promise<void> => {
+  // Load session from storage.
+  // Stable identity: editors and SessionSync list this (via the nav context value) as an
+  // effect dependency, so it must not be recreated on every provider render.
+  const loadSession = useCallback(async (workspaceId: string): Promise<void> => {
     setIsLoadingSession(true);
     try {
       const session = await window.quest.session.get(workspaceId);
@@ -688,10 +707,10 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
     } finally {
       setIsLoadingSession(false);
     }
-  };
+  }, []);
 
-  // Save session to storage  
-  const saveSession = async (workspaceId: string): Promise<void> => {
+  // Save session to storage
+  const saveSession = useCallback(async (workspaceId: string): Promise<void> => {
     if (workspaceId === '') {
       return;
     }
@@ -721,12 +740,15 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
     } catch (error: unknown) {
       console.error('Failed to save session:', error);
     }
-  };
+  }, [tabs, activeTabId, status.nameByTabId]);
 
   // Resource state management (for unsaved changes) - saveResourceState and getResourceState.
   // resourceId must be a composite key of the form collectionId::itemId (constructed by the caller)
   // so that items with the same ID across different collections are stored separately.
-  const saveResourceState = async (workspaceId: string, resourceId: string, state: ResourceSessionState): Promise<void> => {
+  // Both are pure IPC wrappers with no provider state, so they are stable for the provider's lifetime.
+  // Editors depend on them from effects and useAutoSave callbacks; an unstable identity here
+  // re-ran the CollectionEditor load effect on every keystroke (continuous "Loading..." flicker).
+  const saveResourceState = useCallback(async (workspaceId: string, resourceId: string, state: ResourceSessionState): Promise<void> => {
     try {
       const session = await window.quest.session.get(workspaceId);
       if (session === null) {
@@ -742,9 +764,9 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
     } catch (error: unknown) {
       console.error('Failed to save resource state:', error);
     }
-  };
+  }, []);
 
-  const getResourceState = async (workspaceId: string, resourceId: string): Promise<ResourceSessionState | null> => {
+  const getResourceState = useCallback(async (workspaceId: string, resourceId: string): Promise<ResourceSessionState | null> => {
     try {
       const session = await window.quest.session.get(workspaceId);
       return session?.resources?.[resourceId] ?? null;
@@ -752,15 +774,16 @@ export function TabProvider({ children }: TabProviderProps): ReactElement {
       console.error('Failed to get resource state:', error);
       return null;
     }
-  };
+  }, []);
 
-  // Auto-save on tab changes (aggressive persistence)
+  // Auto-save on tab changes (aggressive persistence).
+  // saveSession is memoized on tabs/activeTabId/nameByTabId, so it changes exactly when they do.
   useEffect(() => {
     // Don't save while loading session to avoid race conditions
     if (currentWorkspaceId !== null && currentWorkspaceId !== '' && !isLoadingSession) {
       void saveSession(currentWorkspaceId);
     }
-  }, [tabs, activeTabId, currentWorkspaceId, isLoadingSession, status.nameByTabId]);
+  }, [saveSession, currentWorkspaceId, isLoadingSession]);
 
   // Helper to find request in collection
   const findRequestInCollection = (collection: { items: CollectionItem[] }, requestId: string): Request | null => {

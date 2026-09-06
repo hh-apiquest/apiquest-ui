@@ -18,6 +18,11 @@ export function useAutoSave({ onSave, delay = 1000, enabled = true }: UseAutoSav
   const isSavingRef = useRef(false);
   const hasPendingSaveRef = useRef(false);
   const inFlightSaveRef = useRef<Promise<void> | null>(null);
+  // Always call the latest onSave without making executeSave depend on its identity.
+  // Otherwise an unstable onSave re-runs the unmount-flush effect below on every render,
+  // which fires the save immediately and defeats the debounce.
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
 
   // Clear existing timeout
   const clearTimer = useCallback((): void => {
@@ -33,7 +38,7 @@ export function useAutoSave({ onSave, delay = 1000, enabled = true }: UseAutoSav
     isSavingRef.current = true;
     hasPendingSaveRef.current = false;
 
-    const savePromise = onSave()
+    const savePromise = onSaveRef.current()
       .catch((error: unknown) => {
         console.error('[useAutoSave] Save failed:', error);
       })
@@ -44,7 +49,7 @@ export function useAutoSave({ onSave, delay = 1000, enabled = true }: UseAutoSav
 
     inFlightSaveRef.current = savePromise;
     await savePromise;
-  }, [onSave]);
+  }, []);
 
   // Trigger auto-save with debounce
   const trigger = useCallback((): void => {

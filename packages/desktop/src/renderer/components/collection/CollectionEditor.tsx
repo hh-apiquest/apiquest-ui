@@ -61,7 +61,11 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
   const collectionRef = useRef<CollectionEditorCollection | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<string>(tab.uiState?.activeSubTab ?? 'auth');
-  
+  // Effects below key on the workspace id, not the workspace object: refreshWorkspace() replaces
+  // the object after every save/env change, which would otherwise reload (and flash "Loading...")
+  // every open collection editor.
+  const workspaceId = workspace?.id;
+
   // Get UI context for tab components (memoized to prevent re-creating on every render)
   const uiContext = useMemo(() => pluginLoader.getUIContext() as CollectionEditorUiContext, []);
 
@@ -83,16 +87,19 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
     collectionRef.current = collection;
   }, [collection]);
 
-  // Load collection from workspace
+  // Load collection from workspace.
+  // Runs only when the tab identity or workspace id changes. Every function in the dependency
+  // list is a stable useCallback from TabContext; do not add context values that change per
+  // render here, or each keystroke (setDirty -> provider render) re-runs this load.
   useEffect(() => {
     const loadCollection = async (): Promise<void> => {
-      if (workspace === null) {
+      if (workspaceId === undefined) {
         return;
       }
-      
+
       try {
         setIsLoading(true);
-        const baseCollection = await window.quest.workspace.loadCollection(workspace.id, tab.resourceId) as CollectionEditorCollection;
+        const baseCollection = await window.quest.workspace.loadCollection(workspaceId, tab.resourceId) as CollectionEditorCollection;
         
         // Primary: in-memory state from a previous tab switch.
         // Secondary: IPC session state (app restart recovery).
@@ -104,7 +111,7 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
           setDirty(tab.id, true);
         } else {
           // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
-          const sessionState = await getResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`) as CollectionEditorSessionState | null;
+          const sessionState = await getResourceState(workspaceId, `${tab.collectionId}::${tab.resourceId}`) as CollectionEditorSessionState | null;
           finalCollection = {
             ...baseCollection,
             auth: sessionState?.auth ?? baseCollection.auth,
@@ -127,11 +134,11 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
     };
     
     void loadCollection();
-  }, [getResourceState, getTabEditorState, setDirty, tab.collectionId, tab.id, tab.resourceId, workspace]);
+  }, [getResourceState, getTabEditorState, setDirty, tab.collectionId, tab.id, tab.resourceId, workspaceId]);
 
   // Register save handler for TabBar close flow
   useEffect(() => {
-    if (workspace === null) {
+    if (workspaceId === undefined) {
       return;
     }
 
@@ -144,27 +151,29 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
       await updateCollection(tab.collectionId, currentCollection);
       setDirty(tab.id, false);
       clearTabEditorState(tab.id);
+      // Clear the session draft before the workspace refresh so nothing that reloads
+      // afterwards can read the stale draft and mark the tab dirty again.
+      await clearResourceState(workspaceId, `${tab.collectionId}::${tab.resourceId}`);
       // refresh cache so editors reload the latest if reopened
       clearCollectionCache(tab.collectionId);
       await refreshWorkspace();
-      await clearResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`);
     });
 
     return unregister;
-  }, [workspace, registerSaveHandler, tab.id, tab.collectionId, tab.resourceId, updateCollection, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
+  }, [workspaceId, registerSaveHandler, tab.id, tab.collectionId, tab.resourceId, updateCollection, setDirty, clearTabEditorState, clearCollectionCache, refreshWorkspace, clearResourceState]);
 
   // Stable auto-save callback — does NOT depend on `collection` state directly.
   // Reads collectionRef.current to prevent useAutoSave's cleanup from firing on every change.
   // _runnerState is NOT stored in IPC session (File objects can't serialize; use in-memory only).
   const handleAutoSave = useCallback(async () => {
-    if (workspace === null || collectionRef.current === null) {
+    if (workspaceId === undefined || collectionRef.current === null) {
       return;
     }
     const currentCollection = collectionRef.current;
-    
+
     try {
       // For collections, resourceId equals collectionId. Composite key: collectionId::collectionId.
-      await saveResourceState(workspace.id, `${tab.collectionId}::${tab.resourceId}`, {
+      await saveResourceState(workspaceId, `${tab.collectionId}::${tab.resourceId}`, {
         auth: currentCollection.auth,
         collectionPreScript: currentCollection.collectionPreScript,
         collectionPostScript: currentCollection.collectionPostScript,
@@ -175,12 +184,12 @@ export function CollectionEditor({ tab }: CollectionEditorProps): JSX.Element {
     } catch (error: unknown) {
       console.error('AutoSave failed:', error);
     }
-  }, [workspace, tab.collectionId, tab.resourceId, saveResourceState]);
+  }, [workspaceId, tab.collectionId, tab.resourceId, saveResourceState]);
 
   const { trigger: triggerAutoSave, cancel: cancelAutoSave } = useAutoSave({
     onSave: handleAutoSave,
     delay: 1000,
-    enabled: workspace !== null && collection !== null
+    enabled: workspaceId !== undefined && collection !== null
   });
 
   useEffect(() => {
